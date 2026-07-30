@@ -1,0 +1,8 @@
+[Unit]
+Description=Back up ARM Advantage Annotation SQLite database
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/src/arm-advantage-annotation
+ExecStart=%h/src/arm-advantage-annotation/.venv/bin/python tools/backup_db.py --db %h/.local/share/arm-advantage-annotation/annotations.db --out %h/arm-advantage-annotation-backups --keep 14
+UMask=0077

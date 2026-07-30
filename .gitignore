@@ -1,0 +1,22 @@
+.venv/
+.pytest_cache/
+.ruff_cache/
+**/__pycache__/
+*.py[cod]
+
+# Runtime state can contain Hugging Face datasets, videos, annotations, exports,
+# cached frames, browser profiles, and credentials. Never commit it.
+var/
+state/
+backups/
+
+.env
+.env.*
+!.env.example
+
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.tmp
+.DS_Store

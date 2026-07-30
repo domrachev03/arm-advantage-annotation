@@ -1,0 +1,15 @@
+[Unit]
+Description=ARM Advantage Annotation platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/src/arm-advantage-annotation
+EnvironmentFile=%h/.config/arm-advantage-annotation.env
+ExecStart=%h/src/arm-advantage-annotation/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8120 --workers 1
+Restart=always
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=default.target
