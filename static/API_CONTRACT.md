@@ -40,6 +40,12 @@ errors are read from `{"detail": "..."}`.
   - response: updated `Dataset`
   - a grid change with existing labels returns 409 unless
     `reset_annotations=true`
+- `GET api/datasets/{id}/episodes/{episode}/progress-curve`
+  - response: episode metadata and ordered progress keypoints
+- `PUT api/datasets/{id}/episodes/{episode}/progress-curve`
+  - body: `{"points":[{"frame":0,"value":0.0}, ...]}`
+  - the first and last frames are required; values must be in `[0,1]`
+  - export linearly interpolates one float32 `progress` value per frame
 
 A `Dataset` includes:
 
@@ -70,6 +76,10 @@ A `Dataset` includes:
   }
 }
 ```
+
+In curve mode, `coverage` also includes `curve_completed_episodes`, `curve_percent`,
+`curve_export_ready`, and mode-aware `export_ready`. A curve is complete only after its first and
+last-frame keypoints have been persisted; export requires one complete curve per episode.
 
 ## Queue, frames, and labels
 

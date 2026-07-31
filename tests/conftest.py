@@ -29,6 +29,7 @@ def client() -> TestClient:
             "annotation_history",
             "annotation",
             "completion",
+            "progress_keypoint",
             "export_job",
             "episode",
             "dataset",

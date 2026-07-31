@@ -16,7 +16,56 @@ from app.exporter import (
     deadband_label,
     export_dataset,
     export_fluxvla_dataset,
+    interpolate_progress_curve,
 )
+
+
+def test_progress_curve_is_linearly_interpolated() -> None:
+    values = interpolate_progress_curve(
+        6,
+        [
+            {"frame": 0, "value": 0.0},
+            {"frame": 2, "value": 0.6},
+            {"frame": 5, "value": 0.3},
+        ],
+    )
+
+    assert values.tolist() == pytest.approx([0.0, 0.3, 0.6, 0.5, 0.4, 0.3])
+
+
+def test_progress_curve_requires_episode_endpoints() -> None:
+    with pytest.raises(ExportError, match="first and last"):
+        interpolate_progress_curve(5, [{"frame": 1, "value": 0.0}, {"frame": 4, "value": 1.0}])
+
+
+def test_curve_mode_export_writes_interpolated_progress(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    output = tmp_path / "curve-export"
+    _write_source(source)
+    episodes, _, _ = _inputs()
+    points = [
+        {"episode_index": index, "frame": frame, "value": value}
+        for index in (0, 1)
+        for frame, value in ((0, 0.0), (15, 0.75), (30, 0.5))
+    ]
+
+    result = export_dataset(
+        source,
+        output,
+        episodes,
+        [],
+        [],
+        video_mode="none",
+        progress_keypoints=points,
+    )
+
+    progress = _progress_by_episode(result.root)
+    assert progress[0][0] == pytest.approx(0.0)
+    assert progress[0][15] == pytest.approx(0.75)
+    assert progress[0][30] == pytest.approx(0.5)
+    manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["annotation_mode"] == "curve"
+    assert manifest["totals"]["pairs"] == 0
 
 
 def _write_source(root: Path) -> None:

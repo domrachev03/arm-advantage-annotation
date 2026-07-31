@@ -89,7 +89,7 @@ class ExportResult:
 class _EpisodePass:
     metadata: EpisodeMetadata
     labels: tuple[PairLabel, ...]
-    completion: CompletionState
+    completion: CompletionState | None
     progress: np.ndarray
 
 
@@ -223,6 +223,21 @@ def reconstruct_episode_progress(
     progress = np.asarray(progress, dtype=np.float32)
     _validate_progress(metadata, episode_labels, completion_state, progress, interval_eps)
     return progress
+
+
+def interpolate_progress_curve(
+    length: int, points: Iterable[Mapping[str, Any]]
+) -> np.ndarray:
+    """Linearly interpolate explicit progress keypoints to one float32 value per frame."""
+    rows = sorted((int(p["frame"]), float(p["value"])) for p in points)
+    if length <= 0 or len(rows) < 2:
+        raise ExportError("a progress curve needs at least two keypoints")
+    frames = [frame for frame, _ in rows]
+    if len(frames) != len(set(frames)) or frames[0] != 0 or frames[-1] != length - 1:
+        raise ExportError("progress keypoints must be unique and include first and last frames")
+    if any(not 0 <= value <= 1 for _, value in rows):
+        raise ExportError("progress keypoint values must be within [0, 1]")
+    return np.interp(np.arange(length), frames, [value for _, value in rows]).astype(np.float32)
 
 
 def _validate_episode_inputs(
@@ -368,6 +383,7 @@ def export_dataset(
     video_mode: VideoMode = "symlink",
     interval_eps: float = DEFAULT_INTERVAL_EPS,
     no_completion_ceiling: float = DEFAULT_NO_COMPLETION_CEILING,
+    progress_keypoints: Iterable[Mapping[str, Any]] | None = None,
 ) -> ExportResult:
     """Atomically export a complete ARM annotation set as a LeRobot v3 copy.
 
@@ -385,12 +401,17 @@ def export_dataset(
     episode_rows = tuple(_episode(item) for item in episodes)
     pair_rows = tuple(_pair(item) for item in labels)
     completion_rows = tuple(_completion(item) for item in completions)
-    passes = _build_passes(
-        episode_rows,
-        pair_rows,
-        completion_rows,
-        interval_eps=interval_eps,
-        no_completion_ceiling=no_completion_ceiling,
+    keypoint_rows = tuple(progress_keypoints or ())
+    passes = (
+        _build_curve_passes(episode_rows, keypoint_rows)
+        if progress_keypoints is not None
+        else _build_passes(
+            episode_rows,
+            pair_rows,
+            completion_rows,
+            interval_eps=interval_eps,
+            no_completion_ceiling=no_completion_ceiling,
+        )
     )
     frame_count = _validate_data_rows(source, passes)
 
@@ -455,6 +476,7 @@ def export_fluxvla_dataset(
     video_mode: VideoMode = "symlink",
     interval_eps: float = DEFAULT_INTERVAL_EPS,
     no_completion_ceiling: float = DEFAULT_NO_COMPLETION_CEILING,
+    progress_keypoints: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Service adapter for records whose dataset-wide Δ and FPS are separate.
 
@@ -486,6 +508,7 @@ def export_fluxvla_dataset(
         video_mode=video_mode,
         interval_eps=interval_eps,
         no_completion_ceiling=no_completion_ceiling,
+        progress_keypoints=progress_keypoints,
     )
     return json.loads(result.manifest_path.read_text(encoding="utf-8"))
 
@@ -573,6 +596,22 @@ def _build_passes(
             no_completion_ceiling=no_completion_ceiling,
         )
         passes[index] = _EpisodePass(metadata, episode_labels, completion, progress)
+    return passes
+
+
+def _build_curve_passes(
+    episodes: tuple[EpisodeMetadata, ...], points: tuple[Mapping[str, Any], ...]
+) -> dict[int, _EpisodePass]:
+    by_episode: dict[int, list[Mapping[str, Any]]] = {item.episode_index: [] for item in episodes}
+    for point in points:
+        index = int(point["episode_index"])
+        if index not in by_episode:
+            raise ExportError(f"progress keypoint references unknown episode {index}")
+        by_episode[index].append(point)
+    passes: dict[int, _EpisodePass] = {}
+    for episode in episodes:
+        progress = interpolate_progress_curve(episode.length, by_episode[episode.episode_index])
+        passes[episode.episode_index] = _EpisodePass(episode, (), None, progress)
     return passes
 
 
@@ -664,6 +703,8 @@ def _pair_records(passes: dict[int, _EpisodePass]) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for index in sorted(passes):
         item = passes[index]
+        if item.completion is None:
+            continue
         for label in item.labels:
             frame_t = label.target_frame - label.delta_frames
             delta = float(item.progress[label.target_frame]) - float(item.progress[frame_t])
@@ -729,12 +770,25 @@ def _manifest(
         "pair_deadband": interval_eps,
         "completion_threshold": 1 - interval_eps,
         "no_completion_ceiling": no_completion_ceiling,
+        "annotation_mode": "curve" if all(item.completion is None for item in passes.values()) else "direct",
         "reconstruction": {
-            "input": "direct labels for (target_frame - delta_frames, target_frame)",
+            "input": (
+                "progress keypoints"
+                if all(item.completion is None for item in passes.values())
+                else "direct labels for (target_frame - delta_frames, target_frame)"
+            ),
             "grid": "five-frame causal windows; first target is 4 * delta_frames",
             "accumulator": "unbounded cumulative sum; each label lands on target_frame",
-            "interpolation": "step/hold between target frames",
-            "normalization": "episode-relative min-max after accumulation",
+            "interpolation": (
+                "linear between progress keypoints"
+                if all(item.completion is None for item in passes.values())
+                else "step/hold between target frames"
+            ),
+            "normalization": (
+                "none; keypoint values are stored in [0, 1]"
+                if all(item.completion is None for item in passes.values())
+                else "episode-relative min-max after accumulation"
+            ),
             "marked_completion": "completion frame is exactly 1.0 and held afterward",
             "never_completion": "scaled maximum is no_completion_ceiling",
             "round_trip": (
@@ -747,10 +801,10 @@ def _manifest(
             "frames": frame_count,
             "pairs": len(pair_records),
             "marked_completions": sum(
-                item.completion.state == "marked" for item in passes.values()
+                item.completion is not None and item.completion.state == "marked" for item in passes.values()
             ),
             "never_completions": sum(
-                item.completion.state == "never" for item in passes.values()
+                item.completion is not None and item.completion.state == "never" for item in passes.values()
             ),
             "pair_labels": {
                 "-1": label_counts[-1],
@@ -771,7 +825,7 @@ def _manifest(
                     "frame": item.completion.frame,
                     "annotator": item.completion.annotator,
                     "updated_at": item.completion.updated_at,
-                },
+                } if item.completion is not None else None,
                 "min_progress": float(np.min(item.progress)),
                 "max_progress": float(np.max(item.progress)),
             }

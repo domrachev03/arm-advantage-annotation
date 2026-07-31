@@ -9,8 +9,8 @@
     />
     <meta name="theme-color" content="#101713" />
     <title>ARM Advantage Studio</title>
-    <link rel="stylesheet" href="./styles.css?v=20260730-3" />
-    <script src="./app.js?v=20260730-3" defer></script>
+    <link rel="stylesheet" href="./styles.css?v=20260801-4" />
+    <script src="./app.js?v=20260801-4" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#annotation-workspace">Skip to annotation workspace</a>
@@ -34,6 +34,13 @@
               <option value="">No datasets yet</option>
             </select>
           </div>
+        </div>
+        <div class="topbar-mode">
+          <label class="eyebrow" for="annotation-mode">Annotation mode</label>
+          <select id="annotation-mode" disabled>
+            <option value="direct">Frame labels</option>
+            <option value="curve">Progress curve</option>
+          </select>
         </div>
 
         <div class="topbar-actions">
@@ -162,24 +169,24 @@
               <div class="coverage-ring" id="coverage-ring" style="--coverage: 0">
                 <div>
                   <strong id="coverage-percent">0%</strong>
-                  <span>labeled</span>
+                  <span id="coverage-ring-label">labeled</span>
                 </div>
               </div>
               <div class="coverage-copy">
                 <p class="eyebrow">Coverage</p>
                 <h2><span id="coverage-labeled">0</span> / <span id="coverage-total">0</span></h2>
-                <p>advantage transitions</p>
+                <p id="coverage-unit">advantage transitions</p>
               </div>
             </div>
 
             <div class="completion-summary">
               <span>
                 <i class="mini-dot marked"></i>
-                <strong id="completion-answered">0</strong> completion answers
+                <strong id="completion-answered">0</strong> <span id="completion-answered-label">completion answers</span>
               </span>
               <span>
                 <i class="mini-dot pending"></i>
-                <strong id="completion-pending">0</strong> pending
+                <strong id="completion-pending">0</strong> <span id="completion-pending-label">pending</span>
               </span>
             </div>
           </section>
@@ -413,6 +420,48 @@
               </button>
             </nav>
           </div>
+
+          <div class="curve-view is-hidden" id="curve-view">
+            <header class="curve-header">
+              <div>
+                <p class="eyebrow" id="curve-episode-position">Episode — / —</p>
+                <h1 id="curve-task">Progress curve</h1>
+                <p id="curve-meta">Choose key moments; values between them are linearly interpolated.</p>
+              </div>
+              <div class="curve-episode-nav">
+                <button class="button button-secondary" id="curve-prev" type="button">← Previous</button>
+                <button class="button button-secondary" id="curve-next" type="button">Next →</button>
+              </div>
+            </header>
+            <section class="curve-preview">
+              <div class="curve-image-wrap">
+                <div class="frame-skeleton" id="curve-image-skeleton"></div>
+                <img id="curve-image" alt="Current episode frame" />
+              </div>
+              <div class="curve-frame-readout">
+                <strong id="curve-frame-label">Frame 0</strong>
+                <span id="curve-time-label">00:00.00</span>
+              </div>
+            </section>
+            <section class="timeline-editor">
+              <div class="timeline-heading">
+                <div><p class="eyebrow">Episode timeline</p><h2>Progress over time</h2></div>
+                <span id="curve-save-state">Autosave is on</span>
+              </div>
+              <svg id="progress-curve" viewBox="0 0 1000 220" preserveAspectRatio="none" aria-label="Progress curve"></svg>
+              <input id="curve-scrubber" type="range" min="0" max="1" value="0" step="1" aria-label="Current frame" />
+              <div class="curve-controls">
+                <button class="button curve-down" data-curve-change="down" type="button">↘ Decreased <kbd>Z</kbd></button>
+                <button class="button curve-same" data-curve-change="same" type="button">→ Unchanged <kbd>X</kbd></button>
+                <button class="button curve-up" data-curve-change="up" type="button">↗ Increased <kbd>C</kbd></button>
+                <label class="curve-value">Progress <input id="curve-value" type="number" min="0" max="1" step="0.01" value="0" /></label>
+                <button class="button button-quiet" id="curve-set-value" type="button">Set keypoint</button>
+                <button class="button button-quiet" id="curve-delete-point" type="button">Delete point</button>
+                <button class="button button-primary" id="curve-save" type="button">Save curve <kbd>S</kbd></button>
+              </div>
+              <p class="field-help">The first and last frames are fixed keypoint positions. Click or scrub the timeline, then mark whether progress increased, decreased, or stayed unchanged.</p>
+            </section>
+          </div>
         </section>
       </main>
     </div>
@@ -642,6 +691,10 @@
           <div><kbd>B</kbd><span><strong>Previous</strong><small>Review the preceding transition</small></span></div>
           <div><kbd>U</kbd><span><strong>Undo label</strong><small>Roll back the most recent saved choice</small></span></div>
           <div><kbd>N</kbd><span><strong>Next</strong><small>Move to the next transition</small></span></div>
+          <div><kbd>Z/X/C</kbd><span><strong>Curve keypoint</strong><small>Decrease / unchanged / increase in curve mode</small></span></div>
+          <div><kbd>←/→</kbd><span><strong>Scrub curve</strong><small>Move one frame; hold Shift to move ten</small></span></div>
+          <div><kbd>S</kbd><span><strong>Save curve</strong><small>Accept a curve with only its two endpoints</small></span></div>
+          <div><kbd>U</kbd><span><strong>Delete keypoint</strong><small>Remove the selected non-endpoint in curve mode</small></span></div>
         </div>
       </div>
     </dialog>

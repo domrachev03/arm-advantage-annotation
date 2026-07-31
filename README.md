@@ -13,6 +13,8 @@ advantage labels, and exports data consumable by FluxVLA.
 - Five visible frames: `t - 4Δ`, `t - 3Δ`, `t - 2Δ`, `t - Δ`, and `t`.
 - Paper-style labels on the final transition: regressive (`-1`), stagnant
   (`0`), or progressive (`+1`).
+- An alternative video-editor-style progress curve mode with per-episode keypoints,
+  frame scrubbing, and linear per-frame interpolation.
 - A separate episode-completion target: first successful frame or explicit
   non-completion.
 - Fast keyboard annotation with rapid sequences or paced holds on `Z`, `X`,
@@ -81,6 +83,13 @@ From the UI:
 4. Choose delta seconds and wait for indexing to finish.
 5. Annotate with `Z`, `X`, and `C`; record completion with `F` or `Shift+F`.
 6. Export after every required transition and completion answer is present.
+
+Alternatively, select **Progress curve** in the top bar. Scrub through each episode, add
+increased, decreased, or unchanged keypoints, and save a curve for every episode. The first and
+last frames are always endpoints; exported `progress` values between keypoints are linearly
+interpolated as float32 values. In this mode `Z`, `X`, and `C` add decreased, unchanged, and
+increased keypoints; arrow keys scrub frames, `B`/`N` change episodes, `S` saves, and `U` removes
+the selected non-endpoint keypoint.
 
 Private or gated datasets require a read token in `HF_TOKEN`. See the
 [Hugging Face authentication guide](https://huggingface.co/docs/huggingface_hub/quick-start#authentication).

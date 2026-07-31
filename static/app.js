@@ -36,6 +36,9 @@ const state = {
   importSource: "hf",
   exportTimer: null,
   exportPulse: 8,
+  curve: null,
+  curveFrame: 0,
+  curveImageTimer: null,
 };
 
 const HOLD_INITIAL_DELAY_MS = 360;
@@ -211,6 +214,15 @@ function bindEvents() {
   $("#import-source-zip").addEventListener("click", () => setImportSource("zip"));
   $("#export-form").addEventListener("submit", onExport);
   $("#dataset-select").addEventListener("change", (event) => selectDataset(Number(event.target.value)));
+  $("#annotation-mode").addEventListener("change", onAnnotationModeChange);
+  $("#curve-scrubber").addEventListener("input", (event) => selectCurveFrame(Number(event.target.value)));
+  $("#progress-curve").addEventListener("click", onCurveTimelineClick);
+  $$('[data-curve-change]').forEach((button) => button.addEventListener("click", () => addRelativeCurvePoint(button.dataset.curveChange)));
+  $("#curve-set-value").addEventListener("click", () => setCurvePoint(Number($("#curve-value").value)));
+  $("#curve-delete-point").addEventListener("click", deleteCurvePoint);
+  $("#curve-save").addEventListener("click", saveCurve);
+  $("#curve-prev").addEventListener("click", () => loadCurveEpisode(state.curve.episode_index - 1));
+  $("#curve-next").addEventListener("click", () => loadCurveEpisode(state.curve.episode_index + 1));
   $("#camera-select").addEventListener("change", (event) => {
     state.currentCamera = event.target.value;
     state.prefetchGeneration += 1;
@@ -350,6 +362,7 @@ async function selectDataset(id, { refresh = true } = {}) {
   state.recentLabels.clear();
   state.prefetchGeneration += 1;
   state.visualReady = true;
+  state.curve = null;
   if (refresh) {
     state.dataset = await api(`api/datasets/${id}/status`);
   } else {
@@ -359,7 +372,8 @@ async function selectDataset(id, { refresh = true } = {}) {
   $("#dataset-select").value = String(id);
   renderDataset(state.dataset);
   if (state.dataset.status === "ready") {
-    await loadCurrentQueue();
+    if (state.dataset.annotation_mode === "curve") await loadCurveEpisode(0);
+    else await loadCurrentQueue();
   } else if (state.dataset.status === "importing") {
     pollDataset(id);
   }
@@ -394,6 +408,8 @@ function renderDataset(dataset) {
 
   renderSettings(dataset);
   renderCoverage(dataset?.coverage);
+  $("#annotation-mode").disabled = dataset?.status !== "ready";
+  $("#annotation-mode").value = dataset?.annotation_mode || "direct";
 
   const exportButton = $("#open-export");
   exportButton.disabled = !dataset?.coverage?.export_ready;
@@ -499,19 +515,191 @@ function renderSettings(dataset) {
 }
 
 function renderCoverage(coverage = {}) {
-  const labeled = Number(coverage?.labeled_samples || 0);
-  const total = Number(coverage?.total_samples || 0);
-  const percent = Number(coverage?.percent ?? (total ? (labeled / total) * 100 : 0));
-  const completed = Number(coverage?.completed_episodes || 0);
+  const curveMode = state.dataset?.annotation_mode === "curve";
+  const labeled = Number(curveMode ? coverage?.curve_completed_episodes : coverage?.labeled_samples || 0);
+  const total = Number(curveMode ? coverage?.total_episodes : coverage?.total_samples || 0);
+  const percent = Number(curveMode ? coverage?.curve_percent : coverage?.percent ?? (total ? (labeled / total) * 100 : 0));
+  const completed = Number(curveMode ? coverage?.curve_completed_episodes : coverage?.completed_episodes || 0);
   const episodes = Number(coverage?.total_episodes || 0);
   $("#coverage-labeled").textContent = formatInteger(labeled);
   $("#coverage-total").textContent = formatInteger(total);
   $("#coverage-percent").textContent = `${Math.round(percent)}%`;
   $("#coverage-ring").style.setProperty("--coverage", String(Math.max(0, Math.min(100, percent))));
+  $("#coverage-ring-label").textContent = curveMode ? "curves" : "labeled";
+  $("#coverage-unit").textContent = curveMode ? "episode curves saved" : "advantage transitions";
   $("#completion-answered").textContent = formatInteger(completed);
   $("#completion-pending").textContent = formatInteger(Math.max(0, episodes - completed));
+  $("#completion-answered-label").textContent = curveMode ? "curves ready" : "completion answers";
+  $("#completion-pending-label").textContent = curveMode ? "episodes remaining" : "pending";
   if (state.dataset) state.dataset.coverage = { ...state.dataset.coverage, ...coverage };
   $("#open-export").disabled = !coverage?.export_ready;
+}
+
+async function onAnnotationModeChange(event) {
+  if (!state.dataset) return;
+  try {
+    state.dataset = await api(`api/datasets/${state.dataset.id}`, {
+      method: "PATCH",
+      body: { annotation_mode: event.target.value },
+    });
+    renderDataset(state.dataset);
+    if (state.dataset.annotation_mode === "curve") await loadCurveEpisode(0);
+    else await loadCurrentQueue();
+  } catch (error) {
+    toast("Could not change mode", error.message, "error");
+  }
+}
+
+async function loadCurveEpisode(episodeIndex) {
+  const total = Number(state.dataset?.total_episodes || 0);
+  if (episodeIndex < 0 || episodeIndex >= total) return;
+  try {
+    const curve = await api(`api/datasets/${state.dataset.id}/episodes/${episodeIndex}/progress-curve`);
+    curve.persisted = curve.points.length >= 2;
+    if (!curve.points.length) {
+      curve.points = [
+        { frame: 0, value: 0 },
+        { frame: curve.episode_length - 1, value: 1 },
+      ];
+    }
+    state.curve = curve;
+    state.curveFrame = 0;
+    $("#empty-workspace").classList.add("is-hidden");
+    $("#annotation-view").classList.add("is-hidden");
+    $("#curve-view").classList.remove("is-hidden");
+    renderCurveEditor();
+  } catch (error) {
+    toast("Could not load curve", error.message, "error");
+  }
+}
+
+function curveValueAt(frame) {
+  const points = [...state.curve.points].sort((a, b) => a.frame - b.frame);
+  const exact = points.find((point) => point.frame === frame);
+  if (exact) return Number(exact.value);
+  const rightIndex = points.findIndex((point) => point.frame > frame);
+  if (rightIndex <= 0) return Number(points[Math.max(0, rightIndex)]?.value || 0);
+  const left = points[rightIndex - 1];
+  const right = points[rightIndex];
+  const ratio = (frame - left.frame) / (right.frame - left.frame);
+  return Number(left.value) + ratio * (Number(right.value) - Number(left.value));
+}
+
+function renderCurveEditor() {
+  const curve = state.curve;
+  if (!curve) return;
+  const total = Number(state.dataset.total_episodes || 0);
+  $("#curve-episode-position").textContent = `Episode ${curve.episode_index + 1} / ${total}`;
+  $("#curve-task").textContent = curve.task || "Untitled task";
+  $("#curve-meta").textContent = `${formatInteger(curve.episode_length)} frames · ${Number(curve.fps).toFixed(2)} fps · linear interpolation`;
+  $("#curve-save-state").textContent = curve.persisted
+    ? "Saved · linear interpolation active"
+    : "Not saved · click Save curve to complete this episode";
+  $("#curve-save").childNodes[0].textContent = curve.persisted ? "Save changes " : "Save curve ";
+  $("#curve-prev").disabled = curve.episode_index <= 0;
+  $("#curve-next").disabled = curve.episode_index >= total - 1;
+  const scrubber = $("#curve-scrubber");
+  scrubber.max = String(curve.episode_length - 1);
+  scrubber.value = String(state.curveFrame);
+  const value = curveValueAt(state.curveFrame);
+  $("#curve-value").value = value.toFixed(2);
+  $("#curve-frame-label").textContent = `Frame ${formatInteger(state.curveFrame)} · progress ${value.toFixed(3)}`;
+  $("#curve-time-label").textContent = formatTime(state.curveFrame / curve.fps);
+  $("#curve-delete-point").disabled = state.curveFrame === 0 || state.curveFrame === curve.episode_length - 1 || !curve.points.some((p) => p.frame === state.curveFrame);
+  drawProgressCurve();
+  scheduleCurveImage();
+}
+
+function drawProgressCurve() {
+  const svg = $("#progress-curve");
+  svg.replaceChildren();
+  const length = Math.max(1, state.curve.episode_length - 1);
+  const ns = "http://www.w3.org/2000/svg";
+  for (let step = 0; step <= 4; step += 1) {
+    const line = document.createElementNS(ns, "line");
+    line.setAttribute("x1", "0"); line.setAttribute("x2", "1000");
+    line.setAttribute("y1", String(200 - step * 45)); line.setAttribute("y2", String(200 - step * 45));
+    line.setAttribute("class", "curve-grid"); svg.append(line);
+  }
+  const polyline = document.createElementNS(ns, "polyline");
+  polyline.setAttribute("points", [...state.curve.points].sort((a,b) => a.frame-b.frame).map((p) => `${(p.frame/length)*1000},${200-Number(p.value)*180}`).join(" "));
+  polyline.setAttribute("class", "curve-line"); svg.append(polyline);
+  state.curve.points.forEach((point) => {
+    const circle = document.createElementNS(ns, "circle");
+    circle.setAttribute("cx", String((point.frame / length) * 1000));
+    circle.setAttribute("cy", String(200 - Number(point.value) * 180));
+    circle.setAttribute("r", point.frame === state.curveFrame ? "9" : "7");
+    circle.setAttribute("class", point.frame === state.curveFrame ? "curve-point selected" : "curve-point");
+    svg.append(circle);
+  });
+  const cursor = document.createElementNS(ns, "line");
+  cursor.setAttribute("x1", String((state.curveFrame / length) * 1000)); cursor.setAttribute("x2", String((state.curveFrame / length) * 1000));
+  cursor.setAttribute("y1", "10"); cursor.setAttribute("y2", "210"); cursor.setAttribute("class", "curve-cursor"); svg.append(cursor);
+}
+
+function onCurveTimelineClick(event) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const frame = Math.round(((event.clientX - rect.left) / rect.width) * (state.curve.episode_length - 1));
+  selectCurveFrame(frame);
+}
+
+function selectCurveFrame(frame) {
+  state.curveFrame = Math.max(0, Math.min(state.curve.episode_length - 1, Math.round(frame)));
+  renderCurveEditor();
+}
+
+function scheduleCurveImage() {
+  clearTimeout(state.curveImageTimer);
+  const expected = state.curveFrame;
+  state.curveImageTimer = window.setTimeout(() => {
+    if (expected !== state.curveFrame) return;
+    const camera = state.currentCamera || state.curve.camera_keys[0];
+    const image = $("#curve-image");
+    $("#curve-image-skeleton").classList.remove("is-hidden");
+    image.classList.remove("loaded");
+    image.onload = () => { image.classList.add("loaded"); $("#curve-image-skeleton").classList.add("is-hidden"); };
+    image.src = relativeUrl(`api/datasets/${state.dataset.id}/episodes/${state.curve.episode_index}/frames/${expected}?camera=${encodeURIComponent(camera)}`);
+  }, 80);
+}
+
+function addRelativeCurvePoint(direction) {
+  const previous = [...state.curve.points]
+    .filter((point) => point.frame < state.curveFrame)
+    .sort((a, b) => b.frame - a.frame)[0];
+  const baseline = previous ? Number(previous.value) : curveValueAt(state.curveFrame);
+  setCurvePoint(direction === "up" ? baseline + 0.1 : direction === "down" ? baseline - 0.1 : baseline);
+}
+
+async function setCurvePoint(value) {
+  value = Math.max(0, Math.min(1, Number(value)));
+  if (!Number.isFinite(value)) return;
+  const existing = state.curve.points.find((point) => point.frame === state.curveFrame);
+  if (existing) existing.value = value;
+  else state.curve.points.push({ frame: state.curveFrame, value });
+  await saveCurve();
+}
+
+async function deleteCurvePoint() {
+  state.curve.points = state.curve.points.filter((point) => point.frame !== state.curveFrame);
+  await saveCurve();
+}
+
+async function saveCurve() {
+  $("#curve-save-state").textContent = "Saving…";
+  try {
+    const result = await api(`api/datasets/${state.dataset.id}/episodes/${state.curve.episode_index}/progress-curve`, {
+      method: "PUT", body: { points: state.curve.points.map(({ frame, value }) => ({ frame, value })) },
+    });
+    state.curve.points = result.points;
+    state.curve.persisted = true;
+    state.dataset.coverage = result.coverage;
+    renderCoverage(result.coverage);
+    $("#curve-save-state").textContent = "Saved · linear interpolation active";
+    renderCurveEditor();
+  } catch (error) {
+    $("#curve-save-state").textContent = "Save failed";
+    toast("Could not save curve", error.message, "error");
+  }
 }
 
 function setImportSource(source) {
@@ -1473,6 +1661,10 @@ function onKeydown(event) {
   }
   if ($$(".modal[open]").length) return;
   const key = event.key.toLowerCase();
+  if (state.dataset?.annotation_mode === "curve" && state.curve) {
+    handleCurveKeydown(event, key);
+    return;
+  }
   if (key === "z") {
     event.preventDefault();
     if (!event.repeat) beginHeldLabel(key, -1);
@@ -1505,6 +1697,37 @@ function onKeydown(event) {
   }
 }
 
+function handleCurveKeydown(event, key) {
+  if (key === "?") {
+    event.preventDefault();
+    openDialog("help-dialog");
+    return;
+  }
+  if (key === "arrowleft" || key === "arrowright") {
+    event.preventDefault();
+    const direction = key === "arrowleft" ? -1 : 1;
+    selectCurveFrame(state.curveFrame + direction * (event.shiftKey ? 10 : 1));
+    return;
+  }
+  if (event.repeat) return;
+  if (key === "z" || key === "x" || key === "c") {
+    event.preventDefault();
+    addRelativeCurvePoint(key === "z" ? "down" : key === "x" ? "same" : "up");
+  } else if (key === "s") {
+    event.preventDefault();
+    saveCurve();
+  } else if (key === "u") {
+    event.preventDefault();
+    if (!$("#curve-delete-point").disabled) deleteCurvePoint();
+  } else if (key === "b") {
+    event.preventDefault();
+    loadCurveEpisode(state.curve.episode_index - 1);
+  } else if (key === "n") {
+    event.preventDefault();
+    loadCurveEpisode(state.curve.episode_index + 1);
+  }
+}
+
 function onKeyup(event) {
   const key = event.key.toLowerCase();
   if (key === "z" || key === "x" || key === "c") stopHeldLabel(key);
@@ -1512,6 +1735,7 @@ function onKeyup(event) {
 
 function renderEmpty(title, copy, actionLabel = null, action = null) {
   $("#annotation-view").classList.add("is-hidden");
+  $("#curve-view").classList.add("is-hidden");
   const empty = $("#empty-workspace");
   empty.classList.remove("is-hidden");
   $("#workspace-title").textContent = title;

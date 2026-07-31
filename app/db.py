@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS dataset (
     title TEXT NOT NULL,
     root_path TEXT NOT NULL,
     status TEXT NOT NULL CHECK(status IN ('importing','ready','failed')),
+    annotation_mode TEXT NOT NULL DEFAULT 'direct' CHECK(annotation_mode IN ('direct','curve')),
     error TEXT,
     fps REAL,
     delta_seconds REAL NOT NULL,
@@ -90,6 +91,16 @@ CREATE TABLE IF NOT EXISTS completion (
     CHECK((state = 'marked' AND frame IS NOT NULL) OR (state = 'never' AND frame IS NULL))
 );
 
+CREATE TABLE IF NOT EXISTS progress_keypoint (
+    dataset_id INTEGER NOT NULL REFERENCES dataset(id) ON DELETE CASCADE,
+    episode_index INTEGER NOT NULL,
+    frame INTEGER NOT NULL CHECK(frame >= 0),
+    value REAL NOT NULL CHECK(value >= 0 AND value <= 1),
+    annotator TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(dataset_id, episode_index, frame)
+);
+
 CREATE TABLE IF NOT EXISTS export_job (
     id INTEGER PRIMARY KEY,
     dataset_id INTEGER NOT NULL REFERENCES dataset(id) ON DELETE CASCADE,
@@ -106,6 +117,8 @@ CREATE TABLE IF NOT EXISTS export_job (
 CREATE INDEX IF NOT EXISTS annotation_dataset_episode
 ON annotation(dataset_id, episode_index, target_frame);
 CREATE INDEX IF NOT EXISTS completion_dataset ON completion(dataset_id, episode_index);
+CREATE INDEX IF NOT EXISTS progress_keypoint_dataset
+ON progress_keypoint(dataset_id, episode_index, frame);
 """
 
 
@@ -137,6 +150,11 @@ def connect(path: Path | str = DB_PATH, *, read_only: bool = False) -> sqlite3.C
 def migrate(path: Path | str = DB_PATH) -> None:
     with connect(path) as conn:
         conn.executescript(SCHEMA)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(dataset)")}
+        if "annotation_mode" not in columns:
+            conn.execute(
+                "ALTER TABLE dataset ADD COLUMN annotation_mode TEXT NOT NULL DEFAULT 'direct'"
+            )
 
 
 @contextmanager

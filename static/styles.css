@@ -118,6 +118,98 @@ kbd {
   display: none !important;
 }
 
+.topbar-mode {
+  display: grid;
+  gap: 0.25rem;
+  justify-self: center;
+  width: 132px;
+  min-width: 0;
+}
+
+.topbar-mode select {
+  width: 160px;
+  padding: 0.55rem 0.75rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.curve-view {
+  display: grid;
+  gap: 1.25rem;
+  width: 100%;
+  padding: 1.5rem;
+}
+
+.curve-header,
+.timeline-heading,
+.curve-frame-readout,
+.curve-controls,
+.curve-episode-nav {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.curve-preview {
+  width: min(900px, 100%);
+  margin: 0 auto;
+}
+
+.curve-image-wrap {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  background: #080c0a;
+  border: 1px solid var(--line-bright);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.curve-image-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+}
+
+.curve-image-wrap img.loaded { opacity: 1; }
+.curve-frame-readout { padding: 0.65rem 0.2rem; color: var(--muted); }
+
+.timeline-editor {
+  padding: 1.1rem 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+#progress-curve {
+  display: block;
+  width: 100%;
+  height: 220px;
+  margin-top: 0.8rem;
+  cursor: crosshair;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.curve-grid { stroke: var(--line); stroke-width: 1; }
+.curve-line { fill: none; stroke: var(--accent-strong); stroke-width: 5; vector-effect: non-scaling-stroke; }
+.curve-point { fill: var(--accent); stroke: var(--accent-ink); stroke-width: 3; vector-effect: non-scaling-stroke; }
+.curve-point.selected { fill: var(--cream); }
+.curve-cursor { stroke: var(--blue); stroke-width: 2; stroke-dasharray: 6 5; vector-effect: non-scaling-stroke; }
+
+#curve-scrubber { width: 100%; accent-color: var(--accent); }
+.curve-controls { justify-content: flex-start; flex-wrap: wrap; margin-top: 0.8rem; }
+.curve-up { color: var(--green); background: var(--green-bg); }
+.curve-down { color: var(--red); background: var(--red-bg); }
+.curve-same { color: var(--blue); background: var(--blue-bg); }
+.curve-value { display: flex; gap: 0.5rem; align-items: center; margin-left: auto; color: var(--muted); }
+.curve-value input { width: 6rem; padding: 0.55rem; color: var(--text); background: var(--surface-soft); border: 1px solid var(--line); border-radius: var(--radius-md); }
+
 .skip-link {
   position: fixed;
   top: 8px;
@@ -144,7 +236,8 @@ kbd {
   top: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: minmax(220px, 0.72fr) minmax(250px, 1fr) minmax(300px, 0.8fr);
+  grid-template-columns: minmax(190px, 0.6fr) minmax(220px, 1fr) 132px minmax(280px, 0.8fr);
+  gap: 14px;
   align-items: center;
   min-height: var(--topbar);
   padding: 10px 22px;
@@ -1931,7 +2024,7 @@ kbd {
   }
 
   .topbar {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: 1fr 132px auto;
     gap: 8px;
     padding: 9px 13px;
   }
@@ -1943,6 +2036,10 @@ kbd {
   }
 
   .topbar-dataset .eyebrow {
+    display: none;
+  }
+
+  .topbar-mode .eyebrow {
     display: none;
   }
 

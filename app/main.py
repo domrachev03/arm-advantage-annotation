@@ -60,6 +60,7 @@ class DatasetPatch(BaseModel):
     camera_keys: list[str] | None = Field(default=None, max_length=8)
     delta_seconds: float | None = Field(default=None, gt=0, le=60)
     reset_annotations: bool = False
+    annotation_mode: Literal["direct", "curve"] | None = None
 
 
 class LabelIn(BaseModel):
@@ -73,6 +74,15 @@ class CompletionIn(BaseModel):
 
 class ExportIn(BaseModel):
     video_mode: Literal["symlink", "copy", "none"] = "symlink"
+
+
+class ProgressPoint(BaseModel):
+    frame: int = Field(ge=0)
+    value: float = Field(ge=0, le=1)
+
+
+class ProgressCurveIn(BaseModel):
+    points: list[ProgressPoint] = Field(min_length=2, max_length=1000)
 
 
 @app.get("/api/healthz")
@@ -257,6 +267,11 @@ def patch_dataset(dataset_id: int, body: DatasetPatch, _user: User) -> dict[str,
             " WHERE id=?",
             (dumps(camera_keys), delta_seconds, delta_frames, now(), dataset_id),
         )
+        if body.annotation_mode is not None:
+            conn.execute(
+                "UPDATE dataset SET annotation_mode=?,updated_at=? WHERE id=?",
+                (body.annotation_mode, now(), dataset_id),
+            )
     updated = service.get_dataset(dataset_id)
     return {**updated, "coverage": service.coverage(dataset_id)}
 
@@ -608,6 +623,73 @@ def get_frame(
     return FileResponse(decoded, media_type="image/jpeg", headers={"Cache-Control": "private,max-age=86400"})
 
 
+@app.get("/api/datasets/{dataset_id}/episodes/{episode_index}/progress-curve")
+def get_progress_curve(dataset_id: int, episode_index: int, _user: User) -> dict[str, Any]:
+    dataset = service.get_dataset(dataset_id)
+    if not dataset:
+        raise HTTPException(404, "dataset not found")
+    with connect(read_only=True) as conn:
+        episode = conn.execute(
+            "SELECT length,task FROM episode WHERE dataset_id=? AND episode_index=?",
+            (dataset_id, episode_index),
+        ).fetchone()
+        points = conn.execute(
+            "SELECT frame,value,annotator,updated_at FROM progress_keypoint"
+            " WHERE dataset_id=? AND episode_index=? ORDER BY frame",
+            (dataset_id, episode_index),
+        ).fetchall()
+    if not episode:
+        raise HTTPException(404, "episode not found")
+    return {
+        "dataset_id": dataset_id,
+        "episode_index": episode_index,
+        "episode_length": int(episode["length"]),
+        "task": episode["task"],
+        "fps": float(dataset["fps"]),
+        "camera_keys": dataset["camera_keys"],
+        "points": [dict(point) for point in points],
+    }
+
+
+@app.put("/api/datasets/{dataset_id}/episodes/{episode_index}/progress-curve")
+def save_progress_curve(
+    dataset_id: int, episode_index: int, body: ProgressCurveIn, user: User
+) -> dict[str, Any]:
+    if not service.get_dataset(dataset_id):
+        raise HTTPException(404, "dataset not found")
+    with connect(read_only=True) as conn:
+        episode = conn.execute(
+            "SELECT length FROM episode WHERE dataset_id=? AND episode_index=?",
+            (dataset_id, episode_index),
+        ).fetchone()
+    if not episode:
+        raise HTTPException(404, "episode not found")
+    length = int(episode["length"])
+    frames = [point.frame for point in body.points]
+    if len(frames) != len(set(frames)):
+        raise HTTPException(422, "keypoint frames must be unique")
+    if min(frames) != 0 or max(frames) != length - 1:
+        raise HTTPException(422, "the curve must include the first and last episode frames")
+    if any(frame >= length for frame in frames):
+        raise HTTPException(422, "keypoint frame is outside the episode")
+    stamp = now()
+    with transaction() as conn:
+        conn.execute(
+            "DELETE FROM progress_keypoint WHERE dataset_id=? AND episode_index=?",
+            (dataset_id, episode_index),
+        )
+        conn.executemany(
+            "INSERT INTO progress_keypoint(dataset_id,episode_index,frame,value,annotator,updated_at)"
+            " VALUES(?,?,?,?,?,?)",
+            [(dataset_id, episode_index, p.frame, p.value, user, stamp) for p in body.points],
+        )
+    return {
+        "ok": True,
+        "points": [point.model_dump() for point in body.points],
+        "coverage": service.coverage(dataset_id),
+    }
+
+
 @app.post("/api/datasets/{dataset_id}/exports", status_code=202)
 def create_export(dataset_id: int, body: ExportIn, user: User) -> dict[str, Any]:
     dataset = service.get_dataset(dataset_id)
@@ -615,7 +697,12 @@ def create_export(dataset_id: int, body: ExportIn, user: User) -> dict[str, Any]
         raise HTTPException(404, "dataset not found")
     progress = service.coverage(dataset_id)
     if not progress["export_ready"]:
-        raise HTTPException(409, "all episode labels and completion answers are required")
+        detail = (
+            "a saved progress curve is required for every episode"
+            if dataset.get("annotation_mode") == "curve"
+            else "all episode labels and completion answers are required"
+        )
+        raise HTTPException(409, detail)
     stamp = now()
     with transaction() as conn:
         cursor = conn.execute(

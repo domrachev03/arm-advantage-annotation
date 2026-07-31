@@ -61,6 +61,11 @@ def coverage(dataset_id: int) -> dict[str, Any]:
         completions = conn.execute(
             "SELECT * FROM completion WHERE dataset_id=?", (dataset_id,)
         ).fetchall()
+        curve_rows = conn.execute(
+            "SELECT episode_index,count(*) AS points FROM progress_keypoint"
+            " WHERE dataset_id=? GROUP BY episode_index",
+            (dataset_id,),
+        ).fetchall()
     labels_by_episode: dict[int, set[int]] = {}
     for row in annotations:
         labels_by_episode.setdefault(int(row["episode_index"]), set()).add(int(row["target_frame"]))
@@ -79,14 +84,20 @@ def coverage(dataset_id: int) -> dict[str, Any]:
         if completion and all(target in have for target in required):
             completed += 1
     total_episodes = len(episodes)
+    curve_completed = sum(int(row["points"]) >= 2 for row in curve_rows)
+    direct_ready = dataset["status"] == "ready" and total_episodes > 0 and completed == total_episodes
+    curve_ready = dataset["status"] == "ready" and total_episodes > 0 and curve_completed == total_episodes
+    curve_percent = round(100 * curve_completed / total_episodes, 1) if total_episodes else 0.0
     return {
         "total_samples": total,
         "labeled_samples": labeled,
         "completed_episodes": completed,
         "total_episodes": total_episodes,
-        "export_ready": (
-            dataset["status"] == "ready" and total_episodes > 0 and completed == total_episodes
-        ),
+        "curve_completed_episodes": curve_completed,
+        "direct_export_ready": direct_ready,
+        "curve_export_ready": curve_ready,
+        "curve_percent": curve_percent,
+        "export_ready": curve_ready if dataset.get("annotation_mode") == "curve" else direct_ready,
         "percent": round(100 * labeled / total, 1) if total else (100.0 if completed else 0.0),
     }
 
@@ -289,6 +300,14 @@ def _export_worker(export_id: int) -> None:
                     (dataset["id"],),
                 )
             ]
+            progress_keypoints = [
+                dict(row)
+                for row in conn.execute(
+                    "SELECT episode_index,frame,value,annotator,updated_at FROM progress_keypoint"
+                    " WHERE dataset_id=? ORDER BY episode_index,frame",
+                    (dataset["id"],),
+                )
+            ]
         result = export_fluxvla_dataset(
             source_root=Path(dataset["root_path"]),
             output_root=Path(job["output_path"]),
@@ -299,6 +318,9 @@ def _export_worker(export_id: int) -> None:
             fps=float(dataset["fps"]),
             video_mode=str(job["video_mode"]),
             no_completion_ceiling=NO_COMPLETION_CEILING,
+            progress_keypoints=(
+                progress_keypoints if dataset.get("annotation_mode") == "curve" else None
+            ),
         )
         manifest = result if isinstance(result, dict) else vars(result)
         with transaction() as conn:
