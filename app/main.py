@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import math
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -153,6 +154,64 @@ def import_dataset(body: ImportIn, user: User) -> dict[str, Any]:
         root = DATASETS_ROOT / f"dataset-{dataset_id:06d}"
         conn.execute("UPDATE dataset SET root_path=? WHERE id=?", (str(root), dataset_id))
     service.start_import(dataset_id, body.camera_keys)
+    return {"id": dataset_id, "status": "importing"}
+
+
+@app.post("/api/datasets/upload", status_code=202)
+async def upload_dataset(
+    request: Request,
+    user: User,
+    filename: Annotated[str, Query(min_length=1, max_length=255)],
+    title: Annotated[str | None, Query(max_length=120)] = None,
+    camera_keys: Annotated[tuple[str, ...], Query()] = (),
+    delta_seconds: Annotated[float, Query(gt=0, le=60)] = 1.0,
+) -> dict[str, Any]:
+    """Stream a local ZIP to managed storage, then validate it in the background."""
+    safe_filename = Path(filename).name
+    if safe_filename != filename or not safe_filename.lower().endswith(".zip"):
+        raise HTTPException(422, "filename must name a .zip archive")
+    if len(camera_keys) > 8:
+        raise HTTPException(422, "at most 8 camera keys may be selected")
+    stamp = now()
+    with transaction() as conn:
+        cursor = conn.execute(
+            "INSERT INTO dataset(source_url,repo_id,revision,subpath,title,root_path,status,"
+            "delta_seconds,camera_keys_json,created_by,created_at,updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                f"local-upload://{safe_filename}",
+                f"local/{Path(safe_filename).stem}",
+                "local",
+                "",
+                title or Path(safe_filename).stem,
+                "pending",
+                "importing",
+                delta_seconds,
+                dumps(camera_keys),
+                user,
+                stamp,
+                stamp,
+            ),
+        )
+        dataset_id = int(cursor.lastrowid)
+        root = DATASETS_ROOT / f"dataset-{dataset_id:06d}"
+        conn.execute("UPDATE dataset SET root_path=? WHERE id=?", (str(root), dataset_id))
+    root.mkdir(parents=True, exist_ok=True)
+    archive = root / f"upload-{uuid.uuid4().hex}.zip"
+    try:
+        with archive.open("xb") as output:
+            async for chunk in request.stream():
+                output.write(chunk)
+        if archive.stat().st_size == 0:
+            raise HTTPException(422, "uploaded ZIP is empty")
+    except Exception as exc:
+        with transaction() as conn:
+            conn.execute(
+                "UPDATE dataset SET status='failed',error=?,updated_at=? WHERE id=?",
+                (str(getattr(exc, "detail", exc)), now(), dataset_id),
+            )
+        raise
+    service.start_local_import(dataset_id, list(camera_keys), archive)
     return {"id": dataset_id, "status": "importing"}
 
 

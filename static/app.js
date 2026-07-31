@@ -33,6 +33,7 @@ const state = {
   heldLabelTimer: null,
   importTimer: null,
   importPulse: 12,
+  importSource: "hf",
   exportTimer: null,
   exportPulse: 8,
 };
@@ -206,6 +207,8 @@ function bindEvents() {
   });
 
   $("#import-form").addEventListener("submit", onImport);
+  $("#import-source-hf").addEventListener("click", () => setImportSource("hf"));
+  $("#import-source-zip").addEventListener("click", () => setImportSource("zip"));
   $("#export-form").addEventListener("submit", onExport);
   $("#dataset-select").addEventListener("change", (event) => selectDataset(Number(event.target.value)));
   $("#camera-select").addEventListener("change", (event) => {
@@ -511,6 +514,36 @@ function renderCoverage(coverage = {}) {
   $("#open-export").disabled = !coverage?.export_ready;
 }
 
+function setImportSource(source) {
+  state.importSource = source;
+  const local = source === "zip";
+  $("#import-hf-field").classList.toggle("is-hidden", local);
+  $("#import-zip-field").classList.toggle("is-hidden", !local);
+  $("#import-revision-field").classList.toggle("is-hidden", local);
+  $("#import-subdirectory-field").classList.toggle("is-hidden", local);
+  $("#import-source").required = !local;
+  $("#import-file").required = local;
+  $("#import-source-hf").classList.toggle("is-active", !local);
+  $("#import-source-zip").classList.toggle("is-active", local);
+}
+
+async function uploadLocalDataset(file, cameraKeys, deltaSeconds) {
+  const query = new URLSearchParams({ filename: file.name, delta_seconds: String(deltaSeconds) });
+  cameraKeys.forEach((key) => query.append("camera_keys", key));
+  const response = await fetch(relativeUrl(`api/datasets/upload?${query}`), {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { Accept: "application/json", "Content-Type": "application/zip" },
+    body: file,
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    if (response.status === 401) showLogin();
+    throw new ApiError(response.status, payload?.detail || `Upload failed (${response.status}).`, payload);
+  }
+  return payload;
+}
+
 async function onImport(event) {
   event.preventDefault();
   const button = $("#import-submit");
@@ -518,20 +551,24 @@ async function onImport(event) {
     .value.split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+  const deltaSeconds = Number($("#import-delta").value);
   const body = {
     source_url: $("#import-source").value.trim(),
     revision: $("#import-revision").value.trim() || null,
     subpath: $("#import-subdirectory").value.trim() || null,
     camera_keys: cameraKeys,
-    delta_seconds: Number($("#import-delta").value),
+    delta_seconds: deltaSeconds,
   };
   setError($("#import-error"), "");
   setBusy(button, true, "Starting import…");
   try {
-    const created = await api("api/datasets", { method: "POST", body });
+    const created = state.importSource === "zip"
+      ? await uploadLocalDataset($("#import-file").files[0], cameraKeys, deltaSeconds)
+      : await api("api/datasets", { method: "POST", body });
     closeDialog("import-dialog");
     $("#import-form").reset();
     $("#import-delta").value = "1.0";
+    setImportSource("hf");
     state.importPulse = 12;
     toast("Import started", "The dataset is being validated and indexed in the background.");
     await loadDatasets(created.id);

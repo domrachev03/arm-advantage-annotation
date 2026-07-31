@@ -464,17 +464,20 @@
         <div class="modal-heading">
           <div>
             <p class="eyebrow">New annotation dataset</p>
-            <h2>Import from Hugging Face</h2>
+            <h2>Import dataset</h2>
           </div>
           <button class="modal-close" type="button" data-close-dialog="import-dialog" aria-label="Close">
             ×
           </button>
         </div>
         <p class="modal-intro">
-          The source snapshot stays immutable. We download LeRobot v3 metadata, data shards, and
-          selected camera video into a managed workspace.
+          Import a LeRobot v3 dataset from Hugging Face or upload a ZIP archive from this computer.
         </p>
-        <label class="field field-wide">
+        <div class="import-source-tabs" role="group" aria-label="Dataset source">
+          <button class="button button-secondary is-active" id="import-source-hf" type="button">Hugging Face</button>
+          <button class="button button-secondary" id="import-source-zip" type="button">ZIP archive</button>
+        </div>
+        <label class="field field-wide" id="import-hf-field">
           <span>Dataset URL or repository</span>
           <input
             id="import-source"
@@ -485,12 +488,17 @@
           />
           <small>Accepts a Hugging Face dataset URL, hf://datasets/…, or owner/repository.</small>
         </label>
+        <label class="field field-wide is-hidden" id="import-zip-field">
+          <span>LeRobot v3 ZIP archive</span>
+          <input id="import-file" name="archive" type="file" accept=".zip,application/zip" />
+          <small>The archive may contain the dataset directly or inside one top-level folder.</small>
+        </label>
         <div class="form-grid">
-          <label class="field">
+          <label class="field" id="import-revision-field">
             <span>Revision <em>optional</em></span>
             <input id="import-revision" name="revision" placeholder="main" spellcheck="false" />
           </label>
-          <label class="field">
+          <label class="field" id="import-subdirectory-field">
             <span>Subdirectory <em>optional</em></span>
             <input
               id="import-subdirectory"

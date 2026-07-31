@@ -26,6 +26,11 @@ errors are read from `{"detail": "..."}`.
     `{"source_url": string, "revision": string|null, "subpath": string|null,
     "camera_keys": string[], "delta_seconds": number}`
   - response (202): `{"id": int, "status": "importing"}`
+- `POST api/datasets/upload?filename=dataset.zip&delta_seconds=1.0&camera_keys=...`
+  - body: raw ZIP bytes (`Content-Type: application/zip`); repeat `camera_keys` to select
+    multiple cameras
+  - response (202): `{"id": int, "status": "importing"}`; extraction, LeRobot v3 validation,
+    and indexing continue in the background
 - `GET api/datasets/{id}/status`
   - response: one `Dataset`
 - `PATCH api/datasets/{id}`

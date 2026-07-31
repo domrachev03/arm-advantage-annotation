@@ -152,60 +152,84 @@ def _import_worker(dataset_id: int, requested_cameras: list[str]) -> None:
             cameras=requested_cameras or None,
             token=HF_TOKEN,
         )
-        episodes = result.episodes
-        info = dict(result.info)
-        fps = float(info["fps"])
-        camera_keys = list(result.camera_keys)
-        with transaction() as conn:
-            conn.execute("DELETE FROM episode WHERE dataset_id=?", (dataset_id,))
-            for episode in episodes:
-                cameras = {}
-                for key, video in episode.videos.items():
-                    cameras[key] = {
-                        "path": str(video.path.relative_to(result.root)),
-                        "chunk_index": video.chunk_index,
-                        "file_index": video.file_index,
-                        "from_timestamp": video.from_timestamp,
-                        "to_timestamp": video.to_timestamp,
-                    }
-                conn.execute(
-                    "INSERT INTO episode(dataset_id,episode_index,length,task,data_from_index,"
-                    "data_to_index,data_path,cameras_json) VALUES(?,?,?,?,?,?,?,?)",
-                    (
-                        dataset_id,
-                        episode.episode_index,
-                        episode.length,
-                        " · ".join(episode.task_texts),
-                        episode.dataset_from_index,
-                        episode.dataset_to_index,
-                        str(episode.data_path.relative_to(result.root)),
-                        dumps(cameras),
-                    ),
-                )
-            delta_frames = max(1, round(fps * float(dataset["delta_seconds"])))
-            conn.execute(
-                "UPDATE dataset SET root_path=?,status='ready',error=NULL,fps=?,delta_frames=?,"
-                "camera_keys_json=?,info_json=?,total_episodes=?,total_frames=?,updated_at=?"
-                " WHERE id=?",
-                (
-                    str(result.root),
-                    fps,
-                    delta_frames,
-                    dumps(camera_keys),
-                    dumps(info),
-                    len(episodes),
-                    sum(episode.length for episode in episodes),
-                    now(),
-                    dataset_id,
-                ),
-            )
+        _persist_import(dataset_id, dataset, result)
     # A background job must persist every operational failure for the polling UI.
     except Exception as exc:  # noqa: BLE001
-        with transaction() as conn:
+        _fail_import(dataset_id, exc)
+
+
+def _local_import_worker(dataset_id: int, requested_cameras: list[str], archive: Path) -> None:
+    try:
+        from .hf_import import validate_lerobot_v3
+        from .local_import import extract_dataset_zip
+
+        dataset = get_dataset(dataset_id)
+        if dataset is None:
+            return
+        extracted_root = archive.with_suffix("")
+        root = extract_dataset_zip(archive, extracted_root)
+        result = validate_lerobot_v3(root, cameras=requested_cameras or None)
+        _persist_import(dataset_id, dataset, result)
+    except Exception as exc:  # noqa: BLE001
+        _fail_import(dataset_id, exc)
+
+
+def _persist_import(dataset_id: int, dataset: dict[str, Any], result: Any) -> None:
+    episodes = result.episodes
+    info = dict(result.info)
+    fps = float(info["fps"])
+    camera_keys = list(result.camera_keys)
+    with transaction() as conn:
+        conn.execute("DELETE FROM episode WHERE dataset_id=?", (dataset_id,))
+        for episode in episodes:
+            cameras = {}
+            for key, video in episode.videos.items():
+                cameras[key] = {
+                    "path": str(video.path.relative_to(result.root)),
+                    "chunk_index": video.chunk_index,
+                    "file_index": video.file_index,
+                    "from_timestamp": video.from_timestamp,
+                    "to_timestamp": video.to_timestamp,
+                }
             conn.execute(
-                "UPDATE dataset SET status='failed',error=?,updated_at=? WHERE id=?",
-                (f"{type(exc).__name__}: {exc}", now(), dataset_id),
+                "INSERT INTO episode(dataset_id,episode_index,length,task,data_from_index,"
+                "data_to_index,data_path,cameras_json) VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    dataset_id,
+                    episode.episode_index,
+                    episode.length,
+                    " · ".join(episode.task_texts),
+                    episode.dataset_from_index,
+                    episode.dataset_to_index,
+                    str(episode.data_path.relative_to(result.root)),
+                    dumps(cameras),
+                ),
             )
+        delta_frames = max(1, round(fps * float(dataset["delta_seconds"])))
+        conn.execute(
+            "UPDATE dataset SET root_path=?,status='ready',error=NULL,fps=?,delta_frames=?,"
+            "camera_keys_json=?,info_json=?,total_episodes=?,total_frames=?,updated_at=?"
+            " WHERE id=?",
+            (
+                str(result.root),
+                fps,
+                delta_frames,
+                dumps(camera_keys),
+                dumps(info),
+                len(episodes),
+                sum(episode.length for episode in episodes),
+                now(),
+                dataset_id,
+            ),
+        )
+
+
+def _fail_import(dataset_id: int, exc: Exception) -> None:
+    with transaction() as conn:
+        conn.execute(
+            "UPDATE dataset SET status='failed',error=?,updated_at=? WHERE id=?",
+            (f"{type(exc).__name__}: {exc}", now(), dataset_id),
+        )
 
 
 def start_import(dataset_id: int, requested_cameras: list[str]) -> None:
@@ -213,6 +237,16 @@ def start_import(dataset_id: int, requested_cameras: list[str]) -> None:
         target=_import_worker,
         args=(dataset_id, requested_cameras),
         name=f"arm-import-{dataset_id}",
+        daemon=True,
+    )
+    thread.start()
+
+
+def start_local_import(dataset_id: int, requested_cameras: list[str], archive: Path) -> None:
+    thread = threading.Thread(
+        target=_local_import_worker,
+        args=(dataset_id, requested_cameras, archive),
+        name=f"arm-local-import-{dataset_id}",
         daemon=True,
     )
     thread.start()
