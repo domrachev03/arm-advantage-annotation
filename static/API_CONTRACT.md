@@ -24,13 +24,13 @@ errors are read from `{"detail": "..."}`.
 - `POST api/datasets`
   - body:
     `{"source_url": string, "revision": string|null, "subpath": string|null,
-    "camera_keys": string[], "delta_seconds": number}`
+    "camera_keys": string[], "delta_frames": integer}`
   - response (202): `{"id": int, "status": "importing"}`
 - `GET api/datasets/{id}/status`
   - response: one `Dataset`
 - `PATCH api/datasets/{id}`
   - body:
-    `{"delta_seconds": number, "camera_keys"?: string[],
+    `{"delta_frames": integer, "camera_keys"?: string[],
     "reset_annotations"?: bool}`
   - response: updated `Dataset`
   - a grid change with existing labels returns 409 unless
@@ -49,8 +49,8 @@ A `Dataset` includes:
   "status": "importing | ready | failed",
   "error": null,
   "fps": 30.0,
-  "delta_seconds": 1.0,
-  "delta_frames": 30,
+  "delta_seconds": 0.2666666667,
+  "delta_frames": 8,
   "camera_keys": ["observation.images.front"],
   "info": {"codebase_version": "v3.0", "features": {}},
   "total_episodes": 10,
@@ -65,6 +65,11 @@ A `Dataset` includes:
   }
 }
 ```
+
+`delta_frames` is the canonical exact gap between selected LeRobot timestamp
+rows. Responses retain the derived `delta_seconds = delta_frames / fps` for
+display and export compatibility. Requests may still provide `delta_seconds`
+instead of `delta_frames` as a deprecated compatibility path, but not both.
 
 ## Queue, frames, and labels
 

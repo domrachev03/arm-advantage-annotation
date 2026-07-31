@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -9,7 +8,7 @@ from typing import Annotated, Any, Literal
 from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from . import service
 from .annotation import frame_window, sample_targets
@@ -52,13 +51,33 @@ class ImportIn(BaseModel):
     revision: str | None = Field(default=None, max_length=160)
     subpath: str | None = Field(default=None, max_length=500)
     camera_keys: list[str] = Field(default_factory=list, max_length=8)
-    delta_seconds: float = Field(default=1.0, gt=0, le=60)
+    delta_frames: int | None = Field(default=None, ge=1, le=1_000_000)
+    delta_seconds: float | None = Field(
+        default=None, gt=0, le=60, json_schema_extra={"deprecated": True}
+    )
+
+    @model_validator(mode="after")
+    def validate_delta(self) -> ImportIn:
+        if self.delta_frames is not None and self.delta_seconds is not None:
+            raise ValueError("provide delta_frames, not both delta_frames and delta_seconds")
+        if self.delta_frames is None and self.delta_seconds is None:
+            self.delta_frames = 1
+        return self
 
 
 class DatasetPatch(BaseModel):
     camera_keys: list[str] | None = Field(default=None, max_length=8)
-    delta_seconds: float | None = Field(default=None, gt=0, le=60)
+    delta_frames: int | None = Field(default=None, ge=1, le=1_000_000)
+    delta_seconds: float | None = Field(
+        default=None, gt=0, le=60, json_schema_extra={"deprecated": True}
+    )
     reset_annotations: bool = False
+
+    @model_validator(mode="after")
+    def validate_delta(self) -> DatasetPatch:
+        if self.delta_frames is not None and self.delta_seconds is not None:
+            raise ValueError("provide delta_frames, not both delta_frames and delta_seconds")
+        return self
 
 
 class LabelIn(BaseModel):
@@ -132,8 +151,8 @@ def import_dataset(body: ImportIn, user: User) -> dict[str, Any]:
     with transaction() as conn:
         cursor = conn.execute(
             "INSERT INTO dataset(source_url,repo_id,revision,subpath,title,root_path,status,"
-            "delta_seconds,camera_keys_json,created_by,created_at,updated_at)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            "delta_seconds,delta_frames,camera_keys_json,created_by,created_at,updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 body.source_url,
                 repo_id,
@@ -142,7 +161,8 @@ def import_dataset(body: ImportIn, user: User) -> dict[str, Any]:
                 body.title or (subpath.rsplit("/", 1)[-1] if subpath else repo_id),
                 "pending",
                 "importing",
-                body.delta_seconds,
+                body.delta_seconds or 0.0,
+                body.delta_frames,
                 dumps(body.camera_keys),
                 user,
                 stamp,
@@ -175,9 +195,17 @@ def patch_dataset(dataset_id: int, body: DatasetPatch, _user: User) -> dict[str,
             " (SELECT count(*) FROM completion WHERE dataset_id=?)",
             (dataset_id, dataset_id),
         ).fetchone()[0]
-        changing_grid = body.delta_seconds is not None and not math.isclose(
-            body.delta_seconds, float(dataset["delta_seconds"])
-        )
+        if dataset["fps"] is None:
+            raise HTTPException(409, "dataset import has not resolved its frame rate")
+        if body.delta_frames is not None:
+            delta_frames = body.delta_frames
+        elif body.delta_seconds is not None:
+            # Backward compatibility for pre-timestep API clients. New clients
+            # configure the exact integer gap directly with delta_frames.
+            delta_frames = max(1, round(float(dataset["fps"]) * body.delta_seconds))
+        else:
+            delta_frames = int(dataset["delta_frames"])
+        changing_grid = delta_frames != int(dataset["delta_frames"])
         if changing_grid and count and not body.reset_annotations:
             raise HTTPException(
                 409,
@@ -191,8 +219,7 @@ def patch_dataset(dataset_id: int, body: DatasetPatch, _user: User) -> dict[str,
         unknown = [key for key in camera_keys if key not in available]
         if unknown:
             raise HTTPException(422, f"unknown camera keys: {', '.join(unknown)}")
-        delta_seconds = body.delta_seconds or float(dataset["delta_seconds"])
-        delta_frames = max(1, round(float(dataset["fps"]) * delta_seconds))
+        delta_seconds = delta_frames / float(dataset["fps"])
         conn.execute(
             "UPDATE dataset SET camera_keys_json=?,delta_seconds=?,delta_frames=?,updated_at=?"
             " WHERE id=?",

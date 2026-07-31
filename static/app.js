@@ -484,15 +484,18 @@ function renderSettings(dataset) {
     });
   }
 
-  $("#delta-input").value = dataset?.delta_seconds ?? "1.0";
+  $("#delta-input").value = dataset?.delta_frames ?? "1";
   $("#delta-input").disabled = !ready;
   $("#save-settings").disabled = !ready;
   const hasLabels = Number(dataset?.coverage?.labeled_samples || 0) > 0;
   $("#grid-lock").textContent = hasLabels ? "Reset required" : "Configurable";
   $("#grid-lock").classList.toggle("locked", hasLabels);
-  $("#delta-resolution").textContent = dataset?.delta_frames
-    ? `At ${Number(dataset.fps).toFixed(2)} fps: Δ = ${dataset.delta_frames} frames.`
-    : "Δ resolves per episode from its frame rate.";
+  const deltaFrames = Number(dataset?.delta_frames);
+  const deltaSeconds = deltaFrames / Number(dataset?.fps);
+  $("#delta-resolution").textContent = Number.isFinite(deltaSeconds)
+    ? `Δ = ${deltaFrames} timestamp step${deltaFrames === 1 ? "" : "s"} · ` +
+      `${deltaSeconds.toFixed(3)} s at ${Number(dataset.fps).toFixed(2)} fps.`
+    : "Δ is an exact number of LeRobot timestamp steps.";
 }
 
 function renderCoverage(coverage = {}) {
@@ -523,7 +526,7 @@ async function onImport(event) {
     revision: $("#import-revision").value.trim() || null,
     subpath: $("#import-subdirectory").value.trim() || null,
     camera_keys: cameraKeys,
-    delta_seconds: Number($("#import-delta").value),
+    delta_frames: Number($("#import-delta").value),
   };
   setError($("#import-error"), "");
   setBusy(button, true, "Starting import…");
@@ -531,7 +534,7 @@ async function onImport(event) {
     const created = await api("api/datasets", { method: "POST", body });
     closeDialog("import-dialog");
     $("#import-form").reset();
-    $("#import-delta").value = "1.0";
+    $("#import-delta").value = "1";
     state.importPulse = 12;
     toast("Import started", "The dataset is being validated and indexed in the background.");
     await loadDatasets(created.id);
@@ -545,13 +548,17 @@ async function onImport(event) {
 async function onSaveSettings() {
   if (!state.dataset) return;
   const delta = Number($("#delta-input").value);
-  if (!Number.isFinite(delta) || delta <= 0) {
-    toast("Invalid frame delta", "Enter a positive interval in seconds.", "error");
+  if (!Number.isInteger(delta) || delta <= 0) {
+    toast(
+      "Invalid timestamp delta",
+      "Enter a positive whole number of LeRobot timestamp steps.",
+      "error",
+    );
     return;
   }
   const button = $("#save-settings");
   setBusy(button, true, "Saving…");
-  const body = { delta_seconds: delta };
+  const body = { delta_frames: delta };
   try {
     let updated;
     try {
@@ -576,7 +583,10 @@ async function onSaveSettings() {
     state.recentLabels.clear();
     state.prefetchGeneration += 1;
     renderDataset(updated);
-    toast("Observation setup saved", `Δ now resolves to ${updated.delta_frames} frames.`);
+    toast(
+      "Observation setup saved",
+      `Δ is now exactly ${updated.delta_frames} timestamp steps.`,
+    );
     await loadCurrentQueue();
   } catch (error) {
     toast("Could not save setup", error.message, "error");
@@ -802,8 +812,11 @@ function renderSample() {
     `${state.currentCamera || sample.camera_keys?.[0] || "camera unavailable"}`;
   $("#target-frame").textContent = `Frame ${formatInteger(sample.target_frame)}`;
   $("#target-time").textContent = `${formatTime(sample.target_frame / sample.fps)} into episode`;
+  const deltaSteps = Number(sample.delta_frames);
+  const realizedSeconds = Number(sample.realized_delta_seconds);
   $("#window-delta").textContent =
-    `Δ = ${Number(sample.delta_seconds).toFixed(2)} s · ${sample.delta_frames} frames`;
+    `Δ = ${deltaSteps} timestamp step${deltaSteps === 1 ? "" : "s"} · ` +
+    `${realizedSeconds.toFixed(3)} s`;
   $("#complete-frame-label").textContent = formatInteger(sample.target_frame);
 
   renderFrames();
