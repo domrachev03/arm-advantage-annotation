@@ -76,7 +76,7 @@ From the UI:
 1. Select **Import dataset**.
 2. Enter `owner/repository` or a full Hugging Face dataset URL.
 3. Optionally select a revision, repository subdirectory, and camera keys.
-4. Choose delta seconds and wait for indexing to finish.
+4. Choose an integer timestamp-step delta and wait for indexing to finish.
 5. Annotate with `Z`, `X`, and `C`; record completion with `F` or `Shift+F`.
 6. Export after every required transition and completion answer is present.
 
