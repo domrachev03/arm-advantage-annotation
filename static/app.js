@@ -38,7 +38,9 @@ const state = {
   exportPulse: 8,
   curve: null,
   curveFrame: 0,
-  curveImageTimer: null,
+  curveImageLoading: false,
+  curveImageDesired: null,
+  curveImageActiveKey: null,
 };
 
 const HOLD_INITIAL_DELAY_MS = 360;
@@ -253,7 +255,10 @@ function bindEvents() {
   $("#login-dialog").addEventListener("cancel", (event) => {
     if (!state.user) event.preventDefault();
   });
-  window.addEventListener("resize", alignFrameStrip);
+  window.addEventListener("resize", () => {
+    alignFrameStrip();
+    if (state.curve) drawProgressCurve();
+  });
   window.addEventListener("beforeunload", (event) => {
     if (!state.saving && !state.processingLabels && !state.labelBuffer.length) return;
     event.preventDefault();
@@ -537,6 +542,8 @@ function renderCoverage(coverage = {}) {
 
 async function onAnnotationModeChange(event) {
   if (!state.dataset) return;
+  $("#annotation-view").classList.add("is-hidden");
+  $("#curve-view").classList.add("is-hidden");
   try {
     state.dataset = await api(`api/datasets/${state.dataset.id}`, {
       method: "PATCH",
@@ -547,6 +554,9 @@ async function onAnnotationModeChange(event) {
     else await loadCurrentQueue();
   } catch (error) {
     toast("Could not change mode", error.message, "error");
+    renderDataset(state.dataset);
+    if (state.dataset.annotation_mode === "curve") await loadCurveEpisode(0);
+    else await loadCurrentQueue();
   }
 }
 
@@ -615,6 +625,9 @@ function drawProgressCurve() {
   svg.replaceChildren();
   const length = Math.max(1, state.curve.episode_length - 1);
   const ns = "http://www.w3.org/2000/svg";
+  const bounds = svg.getBoundingClientRect();
+  const scaleX = Math.max(bounds.width / 1000, 0.001);
+  const scaleY = Math.max(bounds.height / 220, 0.001);
   for (let step = 0; step <= 4; step += 1) {
     const line = document.createElementNS(ns, "line");
     line.setAttribute("x1", "0"); line.setAttribute("x2", "1000");
@@ -625,12 +638,14 @@ function drawProgressCurve() {
   polyline.setAttribute("points", [...state.curve.points].sort((a,b) => a.frame-b.frame).map((p) => `${(p.frame/length)*1000},${200-Number(p.value)*180}`).join(" "));
   polyline.setAttribute("class", "curve-line"); svg.append(polyline);
   state.curve.points.forEach((point) => {
-    const circle = document.createElementNS(ns, "circle");
-    circle.setAttribute("cx", String((point.frame / length) * 1000));
-    circle.setAttribute("cy", String(200 - Number(point.value) * 180));
-    circle.setAttribute("r", point.frame === state.curveFrame ? "9" : "7");
-    circle.setAttribute("class", point.frame === state.curveFrame ? "curve-point selected" : "curve-point");
-    svg.append(circle);
+    const marker = document.createElementNS(ns, "ellipse");
+    const radius = point.frame === state.curveFrame ? 6 : 4.5;
+    marker.setAttribute("cx", String((point.frame / length) * 1000));
+    marker.setAttribute("cy", String(200 - Number(point.value) * 180));
+    marker.setAttribute("rx", String(radius / scaleX));
+    marker.setAttribute("ry", String(radius / scaleY));
+    marker.setAttribute("class", point.frame === state.curveFrame ? "curve-point selected" : "curve-point");
+    svg.append(marker);
   });
   const cursor = document.createElementNS(ns, "line");
   cursor.setAttribute("x1", String((state.curveFrame / length) * 1000)); cursor.setAttribute("x2", String((state.curveFrame / length) * 1000));
@@ -649,17 +664,48 @@ function selectCurveFrame(frame) {
 }
 
 function scheduleCurveImage() {
-  clearTimeout(state.curveImageTimer);
-  const expected = state.curveFrame;
-  state.curveImageTimer = window.setTimeout(() => {
-    if (expected !== state.curveFrame) return;
-    const camera = state.currentCamera || state.curve.camera_keys[0];
-    const image = $("#curve-image");
-    $("#curve-image-skeleton").classList.remove("is-hidden");
-    image.classList.remove("loaded");
-    image.onload = () => { image.classList.add("loaded"); $("#curve-image-skeleton").classList.add("is-hidden"); };
-    image.src = relativeUrl(`api/datasets/${state.dataset.id}/episodes/${state.curve.episode_index}/frames/${expected}?camera=${encodeURIComponent(camera)}`);
-  }, 80);
+  const camera = state.currentCamera || state.curve.camera_keys[0];
+  const frame = state.curveFrame;
+  state.curveImageDesired = {
+    key: `${state.dataset.id}:${state.curve.episode_index}:${camera}:${frame}`,
+    frame,
+    episodeIndex: state.curve.episode_index,
+    camera,
+  };
+  pumpCurveImage();
+}
+
+function pumpCurveImage() {
+  if (state.curveImageLoading || !state.curveImageDesired) return;
+  const request = state.curveImageDesired;
+  if (request.key === state.curveImageActiveKey) return;
+  state.curveImageLoading = true;
+  state.curveImageActiveKey = request.key;
+  const visible = $("#curve-image");
+  const skeleton = $("#curve-image-skeleton");
+  if (!visible.classList.contains("loaded")) skeleton.classList.remove("is-hidden");
+  const source = relativeUrl(
+    `api/datasets/${state.dataset.id}/episodes/${request.episodeIndex}/frames/${request.frame}` +
+      `?camera=${encodeURIComponent(request.camera)}`,
+  );
+  const loader = new Image();
+  const settle = () => {
+    state.curveImageLoading = false;
+    if (state.curveImageDesired?.key !== request.key) pumpCurveImage();
+  };
+  loader.onload = () => {
+    // Keep the previous frame visible while decoding, then swap atomically like a video player.
+    const sameEpisode = state.curve?.episode_index === request.episodeIndex;
+    const sameCamera = (state.currentCamera || state.curve?.camera_keys?.[0]) === request.camera;
+    if (sameEpisode && sameCamera) {
+      visible.src = source;
+      visible.classList.add("loaded");
+      skeleton.classList.add("is-hidden");
+    }
+    settle();
+  };
+  loader.onerror = settle;
+  loader.src = source;
 }
 
 function addRelativeCurvePoint(direction) {
@@ -1007,6 +1053,7 @@ function renderSample() {
   const sample = state.sample;
   if (!sample) return;
   $("#empty-workspace").classList.add("is-hidden");
+  $("#curve-view").classList.add("is-hidden");
   $("#annotation-view").classList.remove("is-hidden");
 
   const dataset = state.dataset;
@@ -1706,7 +1753,9 @@ function handleCurveKeydown(event, key) {
   if (key === "arrowleft" || key === "arrowright") {
     event.preventDefault();
     const direction = key === "arrowleft" ? -1 : 1;
-    selectCurveFrame(state.curveFrame + direction * (event.shiftKey ? 10 : 1));
+    const heldStep = event.repeat ? 4 : 1;
+    const step = event.shiftKey ? heldStep * 10 : heldStep;
+    selectCurveFrame(state.curveFrame + direction * step);
     return;
   }
   if (event.repeat) return;
