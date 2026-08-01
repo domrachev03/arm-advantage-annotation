@@ -9,7 +9,7 @@ advantage labels, and exports data consumable by FluxVLA.
 ## What it provides
 
 - LeRobot v3 imports from a repository ID or Hugging Face dataset URL.
-- Configurable temporal delta, resolved to frames using the dataset FPS.
+- Configurable integer timestamp-step delta, applied directly to LeRobot frame indices.
 - Five visible frames: `t - 4Δ`, `t - 3Δ`, `t - 2Δ`, `t - Δ`, and `t`.
 - Paper-style labels on the final transition: regressive (`-1`), stagnant
   (`0`), or progressive (`+1`).
@@ -76,7 +76,7 @@ From the UI:
 1. Select **Import dataset**.
 2. Enter `owner/repository` or a full Hugging Face dataset URL.
 3. Optionally select a revision, repository subdirectory, and camera keys.
-4. Choose delta seconds and wait for indexing to finish.
+4. Choose an integer timestamp-step delta and wait for indexing to finish.
 5. Annotate with `Z`, `X`, and `C`; record completion with `F` or `Shift+F`.
 6. Export after every required transition and completion answer is present.
 

@@ -9,8 +9,8 @@
     />
     <meta name="theme-color" content="#101713" />
     <title>ARM Advantage Studio</title>
-    <link rel="stylesheet" href="./styles.css?v=20260730-3" />
-    <script src="./app.js?v=20260730-3" defer></script>
+    <link rel="stylesheet" href="./styles.css?v=20260731-1" />
+    <script src="./app.js?v=20260731-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#annotation-workspace">Skip to annotation workspace</a>
@@ -136,22 +136,22 @@
             </div>
 
             <label class="field">
-              <span>Frame delta, seconds</span>
+              <span>Timestamp delta</span>
               <span class="number-field">
                 <input
                   id="delta-input"
                   type="number"
-                  min="0.033"
-                  max="30"
-                  step="0.1"
-                  value="1.0"
-                  inputmode="decimal"
+                  min="1"
+                  max="1000000"
+                  step="1"
+                  value="1"
+                  inputmode="numeric"
                   disabled
                 />
-                <span>s</span>
+                <span>steps</span>
               </span>
             </label>
-            <p class="field-help" id="delta-resolution">Δ resolves per episode from its frame rate.</p>
+            <p class="field-help" id="delta-resolution">Δ is an exact number of LeRobot timestamp steps.</p>
             <button class="button button-secondary full" id="save-settings" type="button" disabled>
               Save observation setup
             </button>
@@ -233,7 +233,7 @@
                 </div>
                 <div class="delta-legend">
                   <span class="legend-line"></span>
-                  <span id="window-delta">Δ = 1.0 s</span>
+                  <span id="window-delta">Δ = 1 timestamp step</span>
                 </div>
               </div>
 
@@ -500,19 +500,20 @@
             />
           </label>
           <label class="field">
-            <span>Frame delta</span>
+            <span>Timestamp delta</span>
             <span class="number-field">
               <input
                 id="import-delta"
-                name="delta_seconds"
+                name="delta_frames"
                 type="number"
-                min="0.033"
-                max="30"
-                step="0.1"
-                value="1.0"
+                min="1"
+                max="1000000"
+                step="1"
+                value="1"
+                inputmode="numeric"
                 required
               />
-              <span>seconds</span>
+              <span>steps</span>
             </span>
           </label>
           <label class="field">
@@ -528,8 +529,9 @@
         <div class="info-callout">
           <span aria-hidden="true">i</span>
           <p>
-            Δ is resolved as <code>round(fps × Δ)</code> for each episode. Once labels exist, changing
-            the grid requires an explicit annotation reset.
+            Δ is the exact number of LeRobot timestamp rows between displayed frames.
+            Seconds are derived only for reference. Once labels exist, changing the grid
+            requires an explicit annotation reset.
           </p>
         </div>
         <p class="form-error is-hidden" id="import-error" role="alert"></p>

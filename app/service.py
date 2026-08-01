@@ -182,15 +182,22 @@ def _import_worker(dataset_id: int, requested_cameras: list[str]) -> None:
                         dumps(cameras),
                     ),
                 )
-            delta_frames = max(1, round(fps * float(dataset["delta_seconds"])))
+            delta_frames = (
+                int(dataset["delta_frames"])
+                if dataset["delta_frames"] is not None
+                else max(1, round(fps * float(dataset["delta_seconds"])))
+            )
+            delta_seconds = delta_frames / fps
             conn.execute(
                 "UPDATE dataset SET root_path=?,status='ready',error=NULL,fps=?,delta_frames=?,"
+                "delta_seconds=?,"
                 "camera_keys_json=?,info_json=?,total_episodes=?,total_frames=?,updated_at=?"
                 " WHERE id=?",
                 (
                     str(result.root),
                     fps,
                     delta_frames,
+                    delta_seconds,
                     dumps(camera_keys),
                     dumps(info),
                     len(episodes),

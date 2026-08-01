@@ -263,12 +263,54 @@ def test_delta_change_refuses_to_orphan_labels(client) -> None:
         f"/api/datasets/{dataset_id}/episodes/0/samples/120/label",
         json={"label": 1},
     )
-    refused = client.patch(f"/api/datasets/{dataset_id}", json={"delta_seconds": 2})
+    refused = client.patch(f"/api/datasets/{dataset_id}", json={"delta_frames": 7})
     assert refused.status_code == 409
     reset = client.patch(
         f"/api/datasets/{dataset_id}",
-        json={"delta_seconds": 2, "reset_annotations": True},
+        json={"delta_frames": 7, "reset_annotations": True},
     )
     assert reset.status_code == 200
-    assert reset.json()["delta_frames"] == 60
+    assert reset.json()["delta_frames"] == 7
+    assert reset.json()["delta_seconds"] == 7 / 30
     assert reset.json()["coverage"]["labeled_samples"] == 0
+
+
+def test_import_stores_exact_timestamp_delta(client, monkeypatch) -> None:
+    started: list[tuple[int, list[str]]] = []
+    monkeypatch.setattr(
+        "app.main.service.start_import",
+        lambda dataset_id, camera_keys: started.append((dataset_id, camera_keys)),
+    )
+
+    response = client.post(
+        "/api/datasets",
+        json={"source_url": "owner/repo", "delta_frames": 8},
+    )
+
+    assert response.status_code == 202
+    dataset_id = response.json()["id"]
+    with connect() as conn:
+        dataset = conn.execute("SELECT * FROM dataset WHERE id=?", (dataset_id,)).fetchone()
+    assert dataset["delta_frames"] == 8
+    assert dataset["delta_seconds"] == 0.0
+    assert started == [(dataset_id, [])]
+
+
+def test_legacy_seconds_delta_is_still_accepted(client) -> None:
+    dataset_id = seed_dataset()
+    updated = client.patch(
+        f"/api/datasets/{dataset_id}",
+        json={"delta_seconds": 0.5},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["delta_frames"] == 15
+    assert updated.json()["delta_seconds"] == 0.5
+
+
+def test_delta_request_rejects_frames_and_seconds_together(client) -> None:
+    dataset_id = seed_dataset()
+    response = client.patch(
+        f"/api/datasets/{dataset_id}",
+        json={"delta_frames": 8, "delta_seconds": 0.25},
+    )
+    assert response.status_code == 422

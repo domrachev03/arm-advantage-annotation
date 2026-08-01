@@ -23,9 +23,10 @@ The three labels are:
 - `0`: Stagnant
 - `-1`: Regressive
 
-`Δ` is persisted per dataset, specified in seconds at import, and resolved to
-`round(fps * Δ)` frames. The default is one second, matching the paper. Changing
-the grid after labels exist requires an explicit destructive reset.
+`Δ` is persisted per dataset as an exact positive integer number of LeRobot
+timestamp/frame-index steps. The default is one step. Seconds are derived as
+`Δ / fps` for reference only. Changing the grid after labels exist requires an
+explicit destructive reset.
 
 The completion answer is separate from advantage: either a marked completion
 frame or an explicit "never completes" answer. This supplies FluxVLA's success
