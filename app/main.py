@@ -197,6 +197,11 @@ def patch_dataset(dataset_id: int, body: DatasetPatch, _user: User) -> dict[str,
         ).fetchone()[0]
         if dataset["fps"] is None:
             raise HTTPException(409, "dataset import has not resolved its frame rate")
+        current_delta_frames = (
+            int(dataset["delta_frames"])
+            if dataset["delta_frames"] is not None
+            else max(1, round(float(dataset["fps"]) * float(dataset["delta_seconds"])))
+        )
         if body.delta_frames is not None:
             delta_frames = body.delta_frames
         elif body.delta_seconds is not None:
@@ -204,8 +209,8 @@ def patch_dataset(dataset_id: int, body: DatasetPatch, _user: User) -> dict[str,
             # configure the exact integer gap directly with delta_frames.
             delta_frames = max(1, round(float(dataset["fps"]) * body.delta_seconds))
         else:
-            delta_frames = int(dataset["delta_frames"])
-        changing_grid = delta_frames != int(dataset["delta_frames"])
+            delta_frames = current_delta_frames
+        changing_grid = delta_frames != current_delta_frames
         if changing_grid and count and not body.reset_annotations:
             raise HTTPException(
                 409,
