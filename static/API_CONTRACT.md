@@ -46,6 +46,8 @@ errors are read from `{"detail": "..."}`.
   - body: `{"points":[{"frame":0,"value":0.0}, ...]}`
   - the first and last frames are required; values must be in `[0,1]`
   - export linearly interpolates one float32 `progress` value per frame
+  - the existing completion endpoint is shared with curve mode; marked completion holds progress
+    at `1.0`, while `never` keeps it at or below the configured non-completion ceiling
 
 A `Dataset` includes:
 

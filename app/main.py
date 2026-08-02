@@ -638,6 +638,11 @@ def get_progress_curve(dataset_id: int, episode_index: int, _user: User) -> dict
             " WHERE dataset_id=? AND episode_index=? ORDER BY frame",
             (dataset_id, episode_index),
         ).fetchall()
+        completion = conn.execute(
+            "SELECT state,frame,annotator,updated_at FROM completion"
+            " WHERE dataset_id=? AND episode_index=?",
+            (dataset_id, episode_index),
+        ).fetchone()
     if not episode:
         raise HTTPException(404, "episode not found")
     return {
@@ -648,6 +653,7 @@ def get_progress_curve(dataset_id: int, episode_index: int, _user: User) -> dict
         "fps": float(dataset["fps"]),
         "camera_keys": dataset["camera_keys"],
         "points": [dict(point) for point in points],
+        "completion": dict(completion) if completion else None,
     }
 
 

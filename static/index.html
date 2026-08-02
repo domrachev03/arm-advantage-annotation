@@ -9,8 +9,8 @@
     />
     <meta name="theme-color" content="#101713" />
     <title>ARM Advantage Studio</title>
-    <link rel="stylesheet" href="./styles.css?v=20260801-9" />
-    <script src="./app.js?v=20260801-9" defer></script>
+    <link rel="stylesheet" href="./styles.css?v=20260803-1" />
+    <script src="./app.js?v=20260803-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#annotation-workspace">Skip to annotation workspace</a>
@@ -441,6 +441,17 @@
               <div class="curve-frame-readout">
                 <strong id="curve-frame-label">Frame 0</strong>
                 <span id="curve-time-label">00:00.00</span>
+              </div>
+            </section>
+            <section class="curve-completion">
+              <div>
+                <p class="eyebrow">Episode completion</p>
+                <strong id="curve-completion-status">Not marked</strong>
+                <span id="curve-completion-detail">Mark the first successful frame or explicit non-completion.</span>
+              </div>
+              <div class="curve-completion-actions">
+                <button class="button button-secondary" id="curve-mark-complete" type="button">Complete here <kbd>F</kbd></button>
+                <button class="button button-quiet" id="curve-never-completes" type="button">Never completes <kbd>⇧F</kbd></button>
               </div>
             </section>
             <section class="timeline-editor">

@@ -68,6 +68,36 @@ def test_curve_mode_export_writes_interpolated_progress(tmp_path: Path) -> None:
     assert manifest["totals"]["pairs"] == 0
 
 
+def test_curve_mode_applies_completion_semantics(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    output = tmp_path / "curve-completion-export"
+    _write_source(source)
+    episodes, _, _ = _inputs()
+    points = [
+        {"episode_index": index, "frame": frame, "value": value}
+        for index in (0, 1)
+        for frame, value in ((0, 0.0), (15, 1.0), (30, 0.8))
+    ]
+    completions = [
+        CompletionState(0, "never", None, "alice"),
+        CompletionState(1, "marked", 20, "bob"),
+    ]
+
+    export_dataset(
+        source,
+        output,
+        episodes,
+        [],
+        completions,
+        video_mode="none",
+        progress_keypoints=points,
+    )
+
+    progress = _progress_by_episode(output)
+    assert max(progress[0]) == pytest.approx(0.95)
+    assert progress[1][20:] == [1.0] * 11
+
+
 def _write_source(root: Path) -> None:
     (root / "meta" / "episodes" / "chunk-000").mkdir(parents=True)
     (root / "data" / "chunk-000").mkdir(parents=True)

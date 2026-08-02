@@ -402,9 +402,15 @@ def export_dataset(
     pair_rows = tuple(_pair(item) for item in labels)
     completion_rows = tuple(_completion(item) for item in completions)
     keypoint_rows = tuple(progress_keypoints or ())
+    curve_mode = progress_keypoints is not None
     passes = (
-        _build_curve_passes(episode_rows, keypoint_rows)
-        if progress_keypoints is not None
+        _build_curve_passes(
+            episode_rows,
+            keypoint_rows,
+            completion_rows,
+            no_completion_ceiling=no_completion_ceiling,
+        )
+        if curve_mode
         else _build_passes(
             episode_rows,
             pair_rows,
@@ -442,6 +448,7 @@ def export_dataset(
             passes=passes,
             frame_count=frame_count,
             pair_records=pair_records,
+            curve_mode=curve_mode,
         )
         manifest_path = staging / "meta" / "arm_export_manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -600,7 +607,11 @@ def _build_passes(
 
 
 def _build_curve_passes(
-    episodes: tuple[EpisodeMetadata, ...], points: tuple[Mapping[str, Any], ...]
+    episodes: tuple[EpisodeMetadata, ...],
+    points: tuple[Mapping[str, Any], ...],
+    completions: tuple[CompletionState, ...],
+    *,
+    no_completion_ceiling: float,
 ) -> dict[int, _EpisodePass]:
     by_episode: dict[int, list[Mapping[str, Any]]] = {item.episode_index: [] for item in episodes}
     for point in points:
@@ -608,10 +619,25 @@ def _build_curve_passes(
         if index not in by_episode:
             raise ExportError(f"progress keypoint references unknown episode {index}")
         by_episode[index].append(point)
+    completion_by_episode = {item.episode_index: item for item in completions}
     passes: dict[int, _EpisodePass] = {}
     for episode in episodes:
         progress = interpolate_progress_curve(episode.length, by_episode[episode.episode_index])
-        passes[episode.episode_index] = _EpisodePass(episode, (), None, progress)
+        completion = completion_by_episode.get(episode.episode_index)
+        if completion is not None:
+            if completion.state == "marked":
+                if completion.frame is None or not 0 <= completion.frame < episode.length:
+                    raise ExportError(
+                        f"episode {episode.episode_index}: completion frame is outside the episode"
+                    )
+                progress[completion.frame :] = np.float32(1.0)
+            elif completion.state == "never":
+                progress = np.minimum(progress, np.float32(no_completion_ceiling))
+            else:
+                raise ExportError(
+                    f"episode {episode.episode_index}: invalid completion state"
+                )
+        passes[episode.episode_index] = _EpisodePass(episode, (), completion, progress)
     return passes
 
 
@@ -753,6 +779,7 @@ def _manifest(
     passes: dict[int, _EpisodePass],
     frame_count: int,
     pair_records: list[dict[str, Any]],
+    curve_mode: bool,
 ) -> dict[str, Any]:
     label_counts = Counter(record["label"] for record in pair_records)
     return {
@@ -770,23 +797,23 @@ def _manifest(
         "pair_deadband": interval_eps,
         "completion_threshold": 1 - interval_eps,
         "no_completion_ceiling": no_completion_ceiling,
-        "annotation_mode": "curve" if all(item.completion is None for item in passes.values()) else "direct",
+        "annotation_mode": "curve" if curve_mode else "direct",
         "reconstruction": {
             "input": (
                 "progress keypoints"
-                if all(item.completion is None for item in passes.values())
+                if curve_mode
                 else "direct labels for (target_frame - delta_frames, target_frame)"
             ),
             "grid": "five-frame causal windows; first target is 4 * delta_frames",
             "accumulator": "unbounded cumulative sum; each label lands on target_frame",
             "interpolation": (
                 "linear between progress keypoints"
-                if all(item.completion is None for item in passes.values())
+                if curve_mode
                 else "step/hold between target frames"
             ),
             "normalization": (
                 "none; keypoint values are stored in [0, 1]"
-                if all(item.completion is None for item in passes.values())
+                if curve_mode
                 else "episode-relative min-max after accumulation"
             ),
             "marked_completion": "completion frame is exactly 1.0 and held afterward",

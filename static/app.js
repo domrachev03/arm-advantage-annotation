@@ -223,6 +223,8 @@ function bindEvents() {
   $("#curve-set-value").addEventListener("click", () => setCurvePoint(Number($("#curve-value").value)));
   $("#curve-delete-point").addEventListener("click", deleteCurvePoint);
   $("#curve-save").addEventListener("click", saveCurve);
+  $("#curve-mark-complete").addEventListener("click", () => saveCurveCompletion("marked"));
+  $("#curve-never-completes").addEventListener("click", () => saveCurveCompletion("never"));
   $("#curve-prev").addEventListener("click", () => loadCurveEpisode(state.curve.episode_index - 1));
   $("#curve-next").addEventListener("click", () => loadCurveEpisode(state.curve.episode_index + 1));
   $("#camera-select").addEventListener("change", (event) => {
@@ -616,6 +618,7 @@ function renderCurveEditor() {
   $("#curve-frame-label").textContent = `Frame ${formatInteger(state.curveFrame)} · progress ${value.toFixed(3)}`;
   $("#curve-time-label").textContent = formatTime(state.curveFrame / curve.fps);
   $("#curve-delete-point").disabled = state.curveFrame === 0 || state.curveFrame === curve.episode_length - 1 || !curve.points.some((p) => p.frame === state.curveFrame);
+  renderCurveCompletion();
   drawProgressCurve();
   scheduleCurveImage();
 }
@@ -742,9 +745,63 @@ async function saveCurve() {
     renderCoverage(result.coverage);
     $("#curve-save-state").textContent = "Saved · linear interpolation active";
     renderCurveEditor();
+    return true;
   } catch (error) {
     $("#curve-save-state").textContent = "Save failed";
     toast("Could not save curve", error.message, "error");
+    return false;
+  }
+}
+
+function renderCurveCompletion() {
+  const completion = state.curve?.completion;
+  if (!completion) {
+    $("#curve-completion-status").textContent = "Not marked";
+    $("#curve-completion-detail").textContent = "Mark the first successful frame or explicit non-completion.";
+  } else if (completion.state === "marked") {
+    $("#curve-completion-status").textContent = `Completed at frame ${formatInteger(completion.frame)}`;
+    $("#curve-completion-detail").textContent = `${formatTime(completion.frame / state.curve.fps)} · progress stays at 1.0 afterward.`;
+  } else {
+    $("#curve-completion-status").textContent = "Never completes";
+    $("#curve-completion-detail").textContent = "Exported progress stays below the success threshold.";
+  }
+}
+
+async function saveCurveCompletion(completionState) {
+  const curve = state.curve;
+  if (!curve) return;
+  if (completionState === "marked") {
+    curve.points = curve.points.filter(
+      (point) => point.frame <= state.curveFrame || point.frame === curve.episode_length - 1,
+    );
+    const current = curve.points.find((point) => point.frame === state.curveFrame);
+    if (current) current.value = 1;
+    else curve.points.push({ frame: state.curveFrame, value: 1 });
+    const last = curve.points.find((point) => point.frame === curve.episode_length - 1);
+    if (last) last.value = 1;
+  } else {
+    curve.points.forEach((point) => { point.value = Math.min(Number(point.value), 0.95); });
+  }
+  if (!(await saveCurve())) return;
+  try {
+    const body = {
+      state: completionState,
+      frame: completionState === "marked" ? state.curveFrame : null,
+    };
+    const result = await api(
+      `api/datasets/${state.dataset.id}/episodes/${curve.episode_index}/completion`,
+      { method: "PUT", body },
+    );
+    curve.completion = result.completion;
+    renderCurveCompletion();
+    toast(
+      "Completion saved",
+      completionState === "marked"
+        ? `Episode completes at frame ${state.curveFrame}.`
+        : "Episode marked as never completing.",
+    );
+  } catch (error) {
+    toast("Could not save completion", error.message, "error");
   }
 }
 
@@ -1759,7 +1816,13 @@ function handleCurveKeydown(event, key) {
     return;
   }
   if (event.repeat) return;
-  if (key === "z" || key === "x" || key === "c") {
+  if (key === "f" && event.shiftKey) {
+    event.preventDefault();
+    saveCurveCompletion("never");
+  } else if (key === "f") {
+    event.preventDefault();
+    saveCurveCompletion("marked");
+  } else if (key === "z" || key === "x" || key === "c") {
     event.preventDefault();
     addRelativeCurvePoint(key === "z" ? "down" : key === "x" ? "same" : "up");
   } else if (key === "s") {

@@ -89,7 +89,8 @@ increased, decreased, or unchanged keypoints, and save a curve for every episode
 last frames are always endpoints; exported `progress` values between keypoints are linearly
 interpolated as float32 values. In this mode `Z`, `X`, and `C` add decreased, unchanged, and
 increased keypoints; arrow keys scrub frames, `B`/`N` change episodes, `S` saves, and `U` removes
-the selected non-endpoint keypoint.
+the selected non-endpoint keypoint. `F` marks the current frame as the first successful frame and
+`Shift+F` records that the episode never completes.
 
 Private or gated datasets require a read token in `HF_TOKEN`. See the
 [Hugging Face authentication guide](https://huggingface.co/docs/huggingface_hub/quick-start#authentication).
@@ -160,7 +161,10 @@ covers:
 - backups, restoration, upgrades, rollback, monitoring, and troubleshooting.
 
 See also the [browser API contract](static/API_CONTRACT.md) and
-[implementation notes](docs/IMPLEMENTATION_PLAN.md).
+[implementation notes](docs/IMPLEMENTATION_PLAN.md). For a detailed code-level walkthrough in
+Russian, read [ARM Advantage Annotation: устройство проекта изнутри](docs/ARCHITECTURE_RU.md).
+For an implementation-focused Russian deep dive into the runtime, SQLite, FFmpeg, PyArrow,
+concurrency, and algorithms, read [Техническое устройство](docs/TECHNICAL_DEEP_DIVE_RU.md).
 
 ## Compatibility notes
 
