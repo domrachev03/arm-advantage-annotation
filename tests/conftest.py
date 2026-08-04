@@ -22,10 +22,14 @@ from app.main import app
 
 
 @pytest.fixture()
-def client() -> TestClient:
+def database() -> None:
     migrate()
     with connect() as conn:
         for table in (
+            "prediction_interval",
+            "prediction_frame",
+            "prediction_episode",
+            "prediction_run",
             "annotation_history",
             "annotation",
             "completion",
@@ -34,6 +38,10 @@ def client() -> TestClient:
             "dataset",
         ):
             conn.execute(f"DELETE FROM {table}")
+
+
+@pytest.fixture()
+def client(database: None) -> TestClient:
     with TestClient(app) as test_client:
         response = test_client.post("/api/login", json={"name": "tester", "password": "arm"})
         assert response.status_code == 200
