@@ -14,6 +14,18 @@ const state = {
   user: null,
   datasets: [],
   dataset: null,
+  view: "annotate",
+  annotateView: "empty",
+  compare: {
+    runs: [],
+    runId: null,
+    run: null,
+    episodeIndex: null,
+    series: null,
+    cache: new Map(),
+    runToken: 0,
+    seriesToken: 0,
+  },
   queue: null,
   sample: null,
   currentCamera: null,
@@ -39,6 +51,12 @@ const state = {
 
 const HOLD_INITIAL_DELAY_MS = 360;
 const HOLD_PULSE_MS = 80;
+
+// One episode's compare series is thinned server-side. The curves are drawn as
+// two <polyline> nodes, so extra points cost string length rather than DOM, and
+// the interval strip coalesces equal neighbouring windows into single rectangles.
+const COMPARE_SERIES_POINTS = 1200;
+const COMPARE_SERIES_CACHE = 12;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -107,6 +125,21 @@ function formatTime(seconds) {
   const minutes = Math.floor(value / 60);
   const remainder = value - minutes * 60;
   return `${String(minutes).padStart(2, "0")}:${remainder.toFixed(2).padStart(5, "0")}`;
+}
+
+function formatScore(value, digits = 3) {
+  return Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : "—";
+}
+
+function formatPercent(value, digits = 1) {
+  return Number.isFinite(Number(value)) ? `${(Number(value) * 100).toFixed(digits)}%` : "—";
+}
+
+function element(tag, className = null, text = null) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== null && text !== undefined) node.textContent = text;
+  return node;
 }
 
 function initials(name) {
@@ -227,6 +260,17 @@ function bindEvents() {
   $("#previous-sample").addEventListener("click", goPrevious);
   $("#next-sample").addEventListener("click", goNext);
 
+  $("#open-compare").addEventListener("click", openCompare);
+  $("#close-compare").addEventListener("click", closeCompare);
+  $("#compare-run-select").addEventListener("change", (event) => {
+    selectPredictionRun(Number(event.target.value));
+  });
+  $("#compare-episode-select").addEventListener("change", (event) => {
+    selectCompareEpisode(Number(event.target.value));
+  });
+  $("#compare-previous").addEventListener("click", () => stepCompareEpisode(-1));
+  $("#compare-next").addEventListener("click", () => stepCompareEpisode(1));
+
   document.addEventListener("keydown", onKeydown);
   document.addEventListener("keyup", onKeyup);
   window.addEventListener("blur", () => stopHeldLabel());
@@ -289,6 +333,8 @@ async function onIdentityClick() {
   state.user = null;
   state.dataset = null;
   state.datasets = [];
+  state.view = "annotate";
+  resetCompare();
   renderIdentity();
   renderDatasetSelector();
   renderDataset(null);
@@ -336,6 +382,8 @@ async function selectDataset(id, { refresh = true } = {}) {
   if (!id) return;
   stopHeldLabel();
   clearTimeout(state.importTimer);
+  state.view = "annotate";
+  resetCompare();
   state.history = [];
   state.sample = null;
   state.queue = null;
@@ -357,6 +405,7 @@ async function selectDataset(id, { refresh = true } = {}) {
   renderDataset(state.dataset);
   if (state.dataset.status === "ready") {
     await loadCurrentQueue();
+    await loadPredictionRuns();
   } else if (state.dataset.status === "importing") {
     pollDataset(id);
   }
@@ -394,6 +443,7 @@ function renderDataset(dataset) {
 
   const exportButton = $("#open-export");
   exportButton.disabled = !dataset?.coverage?.export_ready;
+  renderCompareRunCount();
   if (!hasDataset) {
     renderEmpty("Bring in a dataset to begin", "Import a Hugging Face LeRobot v3 dataset to start.");
   } else if (status === "importing") {
@@ -791,8 +841,8 @@ function showCompletionOnly(item) {
 function renderSample() {
   const sample = state.sample;
   if (!sample) return;
-  $("#empty-workspace").classList.add("is-hidden");
-  $("#annotation-view").classList.remove("is-hidden");
+  state.annotateView = "sample";
+  applyWorkspaceView();
 
   const dataset = state.dataset;
   const episodeTotal = Number(dataset?.total_episodes || 0);
@@ -1449,6 +1499,19 @@ function onKeydown(event) {
   }
   if ($$(".modal[open]").length) return;
   const key = event.key.toLowerCase();
+  if (state.view === "compare") {
+    if (key === "escape") {
+      event.preventDefault();
+      closeCompare();
+    } else if (key === "?") {
+      event.preventDefault();
+      openDialog("help-dialog");
+    } else if (!event.repeat && (key === "b" || key === "n")) {
+      event.preventDefault();
+      stepCompareEpisode(key === "b" ? -1 : 1);
+    }
+    return;
+  }
   if (key === "z") {
     event.preventDefault();
     if (!event.repeat) beginHeldLabel(key, -1);
@@ -1486,10 +1549,765 @@ function onKeyup(event) {
   if (key === "z" || key === "x" || key === "c") stopHeldLabel(key);
 }
 
+function applyWorkspaceView() {
+  // The compare view and the annotation view share the workspace column. Both
+  // keep rendering into their own nodes; only one is visible at a time.
+  const comparing = state.view === "compare";
+  $("#compare-view").classList.toggle("is-hidden", !comparing);
+  $("#annotation-view").classList.toggle("is-hidden", comparing || state.annotateView !== "sample");
+  $("#empty-workspace").classList.toggle("is-hidden", comparing || state.annotateView !== "empty");
+}
+
+/*
+ * Model comparison view.
+ *
+ * The prediction API already thins one episode down to a chart-sized series, so
+ * the curves are drawn as two SVG polylines and the interval strip coalesces
+ * neighbouring windows that carry the same label. An episode of a thousand
+ * frames therefore costs a few dozen nodes rather than one node per frame.
+ */
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+// Both plots use a 1000-unit-wide viewBox and CHART's horizontal insets, so the
+// interval strip stays column-aligned with the curve above it at every width.
+const CHART = { width: 1000, height: 300, left: 58, right: 18, top: 16, bottom: 30 };
+const STRIP = { left: 58, top: 8, lane: 16, gap: 6, ruler: 6 };
+const SPLIT_ORDER = ["overall", "train", "val", "validation", "test"];
+
+// A strip block narrower than this cannot be pointed at, so it is drawn without
+// the <title> tooltip that would otherwise double the node count on a dense run.
+const STRIP_TITLE_MIN_WIDTH = 4;
+
+const AGGREGATE_METRICS = [
+  { key: "spearman", label: "Spearman", better: "high" },
+  { key: "pearson", label: "Pearson", better: "high" },
+  { key: "mae", label: "MAE", better: "low" },
+  { key: "interval_accuracy", label: "Interval accuracy", better: "high", percent: true },
+  { key: "success_f1", label: "Success F1", better: "high" },
+];
+
+const EPISODE_METRICS = AGGREGATE_METRICS.filter((metric) => metric.key !== "success_f1");
+const SPLIT_COLUMNS = AGGREGATE_METRICS.filter((metric) => metric.key !== "pearson");
+
+function svgNode(name, attributes = {}) {
+  const node = document.createElementNS(SVG_NS, name);
+  Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, String(value)));
+  return node;
+}
+
+function svgText(attributes, content) {
+  const node = svgNode("text", attributes);
+  node.textContent = content;
+  return node;
+}
+
+function resetCompare() {
+  const compare = state.compare;
+  compare.runs = [];
+  compare.runId = null;
+  compare.run = null;
+  compare.episodeIndex = null;
+  compare.series = null;
+  compare.cache.clear();
+  compare.runToken += 1;
+  compare.seriesToken += 1;
+  renderCompareRunCount();
+}
+
+function compareStorageKey() {
+  return `arm-compare-run-${state.dataset?.id}`;
+}
+
+function renderCompareRunCount() {
+  const count = state.compare.runs.length;
+  const badge = $("#compare-run-count");
+  badge.textContent = formatInteger(count);
+  badge.classList.toggle("is-hidden", count === 0);
+  $("#open-compare").disabled = state.dataset?.status !== "ready";
+}
+
+function showCompareEmpty(title, copy) {
+  $("#compare-empty").classList.remove("is-hidden");
+  $("#compare-body").classList.add("is-hidden");
+  $("#compare-empty-title").textContent = title;
+  $("#compare-empty-copy").textContent = copy;
+}
+
+async function loadPredictionRuns({ silent = true } = {}) {
+  if (!state.dataset) return [];
+  const datasetId = state.dataset.id;
+  try {
+    const runs = await api(`api/datasets/${datasetId}/predictions`);
+    if (state.dataset?.id !== datasetId) return [];
+    state.compare.runs = Array.isArray(runs) ? runs : [];
+  } catch (error) {
+    if (state.dataset?.id !== datasetId) return [];
+    state.compare.runs = [];
+    if (!silent) toast("Prediction runs unavailable", error.message, "error");
+  }
+  renderCompareRunCount();
+  return state.compare.runs;
+}
+
+function renderCompareRunSelector() {
+  const select = $("#compare-run-select");
+  const runs = state.compare.runs;
+  select.replaceChildren();
+  if (!runs.length) {
+    select.append(new Option("No runs uploaded", ""));
+    select.disabled = true;
+    return;
+  }
+  runs.forEach((run) => {
+    const option = new Option(
+      `${run.name} · ${formatInteger(run.episode_count)} episodes`,
+      String(run.id),
+    );
+    option.title = run.name;
+    select.append(option);
+  });
+  select.disabled = false;
+}
+
+async function openCompare() {
+  if (!state.dataset || state.dataset.status !== "ready") return;
+  stopHeldLabel();
+  state.view = "compare";
+  applyWorkspaceView();
+  const datasetName = state.dataset.title || state.dataset.repo_id;
+  const runs = await loadPredictionRuns({ silent: false });
+  if (state.view !== "compare") return;
+  renderCompareRunSelector();
+  if (!runs.length) {
+    $("#compare-run-meta").textContent = `${datasetName} has no prediction runs yet.`;
+    $("#compare-run-meta").title = datasetName;
+    showCompareEmpty(
+      "No prediction run covers this dataset",
+      "An ARM evaluation writes one prediction artifact per checkpoint. Upload it with" +
+        " POST api/predictions and it appears here beside the human labels. The artifact" +
+        " format is defined in docs/model_predictions.md.",
+    );
+    return;
+  }
+  const remembered = Number(localStorage.getItem(compareStorageKey()));
+  const candidate =
+    (runs.some((run) => run.id === state.compare.runId) ? state.compare.runId : null) ||
+    (runs.some((run) => run.id === remembered) ? remembered : null) ||
+    runs[0].id;
+  await selectPredictionRun(candidate);
+}
+
+function closeCompare() {
+  if (state.view !== "compare") return;
+  state.view = "annotate";
+  applyWorkspaceView();
+  alignFrameStrip();
+}
+
+async function selectPredictionRun(runId) {
+  const compare = state.compare;
+  const identifier = Number(runId);
+  if (!Number.isFinite(identifier)) return;
+  const token = (compare.runToken += 1);
+  compare.runId = identifier;
+  compare.cache.clear();
+  $("#compare-run-select").value = String(identifier);
+  localStorage.setItem(compareStorageKey(), String(identifier));
+  try {
+    const run = await api(`api/predictions/${identifier}`);
+    if (token !== compare.runToken || state.view !== "compare") return;
+    compare.run = run;
+    renderCompareRunMeta(run);
+    renderCompareAggregate(run);
+    renderCompareEpisodeSelector(run);
+    const episodes = run.episodes || [];
+    if (!episodes.length) {
+      showCompareEmpty(
+        "This run carries no episodes",
+        `${run.name} was uploaded without per-episode series, so there is nothing to chart.`,
+      );
+      return;
+    }
+    $("#compare-empty").classList.add("is-hidden");
+    $("#compare-body").classList.remove("is-hidden");
+    const wanted = episodes.some((episode) => episode.episode_index === compare.episodeIndex)
+      ? compare.episodeIndex
+      : episodes[0].episode_index;
+    await selectCompareEpisode(wanted);
+  } catch (error) {
+    if (token !== compare.runToken) return;
+    toast("Prediction run unavailable", error.message, "error");
+  }
+}
+
+function renderCompareRunMeta(run) {
+  const trained = String(run.trained_at || "").slice(0, 10);
+  const parts = [
+    run.name,
+    `Δ = ${run.delta_frames} step${Number(run.delta_frames) === 1 ? "" : "s"}`,
+    `window ${run.window_size}`,
+    run.config_id,
+    run.git_sha ? `git ${String(run.git_sha).slice(0, 7)}${run.git_dirty ? "+dirty" : ""}` : null,
+    trained ? `trained ${trained}` : null,
+    run.uploaded_by ? `uploaded by ${run.uploaded_by}` : null,
+  ].filter(Boolean);
+  const meta = $("#compare-run-meta");
+  meta.textContent = parts.join(" · ");
+  meta.title = meta.textContent;
+}
+
+function metricDelta(definition, value, baseline) {
+  if (!Number.isFinite(Number(value)) || !Number.isFinite(Number(baseline))) return null;
+  const difference = Number(value) - Number(baseline);
+  const magnitude = definition.percent
+    ? `${(difference * 100).toFixed(1)} pp`
+    : difference.toFixed(3);
+  const improved = definition.better === "high" ? difference > 0 : difference < 0;
+  return {
+    text: difference > 0 ? `+${magnitude}` : magnitude,
+    tone: difference === 0 ? "level" : improved ? "better" : "worse",
+  };
+}
+
+function metricValueText(definition, value) {
+  return definition.percent ? formatPercent(value) : formatScore(value);
+}
+
+function metricDeltaChip(definition, value, baseline) {
+  const delta = metricDelta(definition, value, baseline);
+  if (!delta) return null;
+  return element("span", `metric-delta ${delta.tone}`, delta.text);
+}
+
+function metricCard(definition, value, baseline) {
+  const card = element("div", "metric-card");
+  card.append(element("p", "metric-label", definition.label));
+  card.append(element("strong", "metric-value", metricValueText(definition, value)));
+  const chip = metricDeltaChip(definition, value, baseline);
+  const footer = element("p", "metric-baseline");
+  if (chip) {
+    footer.append(element("span", null, `Ramp ${metricValueText(definition, baseline)}`), chip);
+  } else {
+    footer.textContent = "No ramp baseline";
+  }
+  card.append(footer);
+  return card;
+}
+
+function metricCell(definition, entry) {
+  const cell = element("td");
+  const baseline = entry?.linear_ramp_baseline || null;
+  cell.append(element("span", "cell-value", metricValueText(definition, entry?.[definition.key])));
+  const chip = metricDeltaChip(definition, entry?.[definition.key], baseline?.[definition.key]);
+  if (chip) cell.append(chip);
+  return cell;
+}
+
+function splitRow(name, entry) {
+  const row = element("tr");
+  const heading = element("th", null, name);
+  heading.scope = "row";
+  row.append(heading);
+  row.append(element("td", null, formatInteger(entry?.episodes)));
+  row.append(element("td", null, formatInteger(entry?.frames)));
+  SPLIT_COLUMNS.forEach((definition) => row.append(metricCell(definition, entry)));
+  return row;
+}
+
+function orderedSplits(bySplit) {
+  return Object.entries(bySplit).sort(([left], [right]) => {
+    const leftRank = SPLIT_ORDER.indexOf(left);
+    const rightRank = SPLIT_ORDER.indexOf(right);
+    if (leftRank !== rightRank) return (leftRank < 0 ? 99 : leftRank) - (rightRank < 0 ? 99 : rightRank);
+    return left.localeCompare(right);
+  });
+}
+
+function renderCompareAggregate(run) {
+  const aggregate = run.aggregate_metrics || {};
+  const overall = aggregate.overall || {};
+  const baseline = overall.linear_ramp_baseline || null;
+  $("#compare-aggregate-metrics").replaceChildren(
+    ...AGGREGATE_METRICS.map((definition) =>
+      metricCard(definition, overall[definition.key], baseline?.[definition.key]),
+    ),
+  );
+  $("#compare-aggregate-note").textContent = baseline
+    ? "Each value is shown against a linear time ramp over the same frames."
+    : "This run reported no linear ramp baseline.";
+  const rows = [["overall", overall], ...orderedSplits(aggregate.by_split || {})];
+  $("#compare-split-rows").replaceChildren(...rows.map(([name, entry]) => splitRow(name, entry)));
+}
+
+function renderCompareEpisodeSelector(run) {
+  const select = $("#compare-episode-select");
+  select.replaceChildren();
+  (run.episodes || []).forEach((episode) => {
+    select.append(
+      new Option(
+        `Episode ${Number(episode.episode_index) + 1} · ${episode.split}`,
+        String(episode.episode_index),
+      ),
+    );
+  });
+  select.disabled = !(run.episodes || []).length;
+}
+
+function seriesCacheKey(runId, episodeIndex) {
+  return `${Number(runId)}:${Number(episodeIndex)}`;
+}
+
+function fetchCompareSeries(runId, episodeIndex) {
+  const key = seriesCacheKey(runId, episodeIndex);
+  const cached = state.compare.cache.get(key);
+  if (cached) return cached;
+  const pending = api(
+    `api/predictions/${runId}/episodes/${episodeIndex}?max_points=${COMPARE_SERIES_POINTS}`,
+  );
+  pending.catch(() => state.compare.cache.delete(key));
+  state.compare.cache.set(key, pending);
+  while (state.compare.cache.size > COMPARE_SERIES_CACHE) {
+    state.compare.cache.delete(state.compare.cache.keys().next().value);
+  }
+  return pending;
+}
+
+function comparePosition() {
+  const episodes = state.compare.run?.episodes || [];
+  return episodes.findIndex((episode) => episode.episode_index === state.compare.episodeIndex);
+}
+
+async function selectCompareEpisode(episodeIndex) {
+  const compare = state.compare;
+  if (!compare.run) return;
+  const index = Number(episodeIndex);
+  const token = (compare.seriesToken += 1);
+  compare.episodeIndex = index;
+  $("#compare-episode-select").value = String(index);
+  renderCompareNavigation();
+  $("#compare-body").setAttribute("aria-busy", "true");
+  try {
+    const series = await fetchCompareSeries(compare.runId, index);
+    if (token !== compare.seriesToken || state.view !== "compare") return;
+    compare.series = series;
+    renderCompareEpisode(series);
+    prefetchCompareEpisode();
+  } catch (error) {
+    if (token !== compare.seriesToken) return;
+    toast("Episode unavailable", error.message, "error");
+  } finally {
+    if (token === compare.seriesToken) $("#compare-body").removeAttribute("aria-busy");
+  }
+}
+
+function prefetchCompareEpisode() {
+  const episodes = state.compare.run?.episodes || [];
+  const next = episodes[comparePosition() + 1];
+  if (next) fetchCompareSeries(state.compare.runId, next.episode_index).catch(() => null);
+}
+
+function stepCompareEpisode(direction) {
+  const episodes = state.compare.run?.episodes || [];
+  const position = comparePosition();
+  const target = episodes[position + direction];
+  if (position < 0 || !target) return;
+  selectCompareEpisode(target.episode_index);
+}
+
+function renderCompareNavigation() {
+  const episodes = state.compare.run?.episodes || [];
+  const position = comparePosition();
+  const total = Number(state.dataset?.total_episodes || 0);
+  $("#compare-previous").disabled = position <= 0;
+  $("#compare-next").disabled = position < 0 || position >= episodes.length - 1;
+  $("#compare-episode-position").textContent =
+    position < 0
+      ? "Episode — / —"
+      : `Episode ${Number(state.compare.episodeIndex) + 1} / ${total || episodes.length}`;
+  $("#compare-episode-label").textContent =
+    position < 0
+      ? "—"
+      : `${Number(state.compare.episodeIndex) + 1} · ${position + 1} of ${episodes.length} in run`;
+}
+
+function compareScales(series) {
+  const lastFrame = Math.max(1, Number(series.length) - 1);
+  const plotWidth = CHART.width - CHART.left - CHART.right;
+  const plotHeight = CHART.height - CHART.top - CHART.bottom;
+  const clamp = (value, low, high) => Math.min(Math.max(value, low), high);
+  return {
+    lastFrame,
+    plotWidth,
+    plotHeight,
+    x: (frame) => CHART.left + (clamp(Number(frame), 0, lastFrame) / lastFrame) * plotWidth,
+    y: (progress) => CHART.top + (1 - clamp(Number(progress), 0, 1)) * plotHeight,
+    frameAt: (x) => clamp(((x - CHART.left) / plotWidth) * lastFrame, 0, lastFrame),
+  };
+}
+
+function frameTicks(lastFrame, count = 6) {
+  const ticks = [];
+  for (let step = 0; step < count; step += 1) {
+    ticks.push(Math.round((lastFrame * step) / (count - 1)));
+  }
+  return [...new Set(ticks)];
+}
+
+function nearestPointIndex(frames, frame) {
+  let low = 0;
+  let high = frames.length - 1;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (frames[middle] < frame) low = middle + 1;
+    else high = middle;
+  }
+  if (low > 0 && Math.abs(frames[low - 1] - frame) <= Math.abs(frames[low] - frame)) return low - 1;
+  return low;
+}
+
+function labelClass(value) {
+  if (value === -1) return "regressive";
+  if (value === 0) return "stagnant";
+  if (value === 1) return "progressive";
+  return "unscored";
+}
+
+function labelText(value) {
+  if (value === -1) return "−1";
+  if (value === 0) return "0";
+  if (value === 1) return "+1";
+  return "unscored";
+}
+
+function describeBlock(node, width, caption) {
+  if (width < STRIP_TITLE_MIN_WIDTH) return node;
+  const title = svgNode("title");
+  title.textContent = caption;
+  node.append(title);
+  return node;
+}
+
+function isDisagreement(interval) {
+  return interval.gt_label !== null && interval.predicted_label !== interval.gt_label;
+}
+
+function coalesceIntervals(intervals, valueOf, fallbackDelta) {
+  // Adjacent windows that carry the same label become one rectangle, so a
+  // thousand-frame episode draws a handful of blocks instead of a thousand.
+  const runs = [];
+  intervals.forEach((interval) => {
+    const delta = Number(interval.delta_frames || fallbackDelta || 1);
+    const start = Number(interval.target_frame) - delta;
+    const end = Number(interval.target_frame);
+    const value = valueOf(interval);
+    const previous = runs[runs.length - 1];
+    if (previous && previous.value === value && previous.end === start) {
+      previous.end = end;
+      previous.windows += 1;
+      return;
+    }
+    runs.push({ value, start, end, windows: 1 });
+  });
+  return runs;
+}
+
+function renderCompareChart(series, scale) {
+  const svg = $("#compare-chart");
+  const frames = series.frame_indices || [];
+  const predicted = series.predicted_progress || [];
+  const groundTruth = series.gt_progress || [];
+  const nodes = [
+    svgNode("rect", {
+      class: "plot-face",
+      x: CHART.left,
+      y: CHART.top,
+      width: scale.plotWidth,
+      height: scale.plotHeight,
+      rx: 8,
+    }),
+  ];
+
+  for (let step = 0; step <= 4; step += 1) {
+    const value = step / 4;
+    const y = scale.y(value);
+    nodes.push(
+      svgNode("line", {
+        class: "plot-grid",
+        x1: CHART.left,
+        x2: CHART.width - CHART.right,
+        y1: y,
+        y2: y,
+      }),
+      svgText({ class: "plot-tick", x: CHART.left - 10, y: y + 4, "text-anchor": "end" }, value.toFixed(2)),
+    );
+  }
+
+  frameTicks(scale.lastFrame).forEach((frame) => {
+    const x = scale.x(frame);
+    nodes.push(
+      svgNode("line", {
+        class: "plot-grid vertical",
+        x1: x,
+        x2: x,
+        y1: CHART.top,
+        y2: CHART.top + scale.plotHeight,
+      }),
+      svgText(
+        { class: "plot-tick", x, y: CHART.height - 8, "text-anchor": "middle" },
+        formatInteger(frame),
+      ),
+    );
+  });
+
+  const humanPoints = frames.map(
+    (frame, index) => `${scale.x(frame).toFixed(2)},${scale.y(groundTruth[index]).toFixed(2)}`,
+  );
+  const modelPoints = frames.map(
+    (frame, index) => `${scale.x(frame).toFixed(2)},${scale.y(predicted[index]).toFixed(2)}`,
+  );
+  if (humanPoints.length) {
+    nodes.push(
+      svgNode("polygon", {
+        class: "plot-gap",
+        points: [...humanPoints, ...[...modelPoints].reverse()].join(" "),
+      }),
+      svgNode("polyline", { class: "plot-line human", points: humanPoints.join(" ") }),
+      svgNode("polyline", { class: "plot-line model", points: modelPoints.join(" ") }),
+    );
+  }
+
+  const completionFrame = Number(series.success?.gt_frame ?? Number.NaN);
+  if (Number.isFinite(completionFrame)) {
+    const x = scale.x(completionFrame);
+    // Keep the caption inside the plot: it flips sides once the marker is past
+    // the midpoint so it never runs off the right edge.
+    const late = x > CHART.left + scale.plotWidth / 2;
+    nodes.push(
+      svgNode("line", {
+        class: "plot-completion",
+        x1: x,
+        x2: x,
+        y1: CHART.top,
+        y2: CHART.top + scale.plotHeight,
+      }),
+      svgText(
+        {
+          class: "plot-tick completion",
+          x: late ? x - 8 : x + 8,
+          y: CHART.top + scale.plotHeight - 8,
+          "text-anchor": late ? "end" : "start",
+        },
+        "human completion",
+      ),
+    );
+  }
+
+  const cursor = svgNode("g", { class: "plot-cursor is-hidden" });
+  const cursorLine = svgNode("line", {
+    x1: CHART.left,
+    x2: CHART.left,
+    y1: CHART.top,
+    y2: CHART.top + scale.plotHeight,
+  });
+  const humanDot = svgNode("circle", { class: "human", r: 4, cx: CHART.left, cy: CHART.top });
+  const modelDot = svgNode("circle", { class: "model", r: 4, cx: CHART.left, cy: CHART.top });
+  cursor.append(cursorLine, humanDot, modelDot);
+  nodes.push(cursor);
+
+  const surface = svgNode("rect", {
+    class: "plot-surface",
+    x: CHART.left,
+    y: CHART.top,
+    width: scale.plotWidth,
+    height: scale.plotHeight,
+  });
+  const moveCursor = (event) => {
+    if (!frames.length) return;
+    const box = svg.getBoundingClientRect();
+    if (!box.width) return;
+    const frame = scale.frameAt(((event.clientX - box.left) / box.width) * CHART.width);
+    const index = nearestPointIndex(frames, frame);
+    const x = scale.x(frames[index]);
+    cursorLine.setAttribute("x1", String(x));
+    cursorLine.setAttribute("x2", String(x));
+    humanDot.setAttribute("cx", String(x));
+    humanDot.setAttribute("cy", String(scale.y(groundTruth[index])));
+    modelDot.setAttribute("cx", String(x));
+    modelDot.setAttribute("cy", String(scale.y(predicted[index])));
+    cursor.classList.remove("is-hidden");
+    $("#compare-readout").textContent =
+      `Frame ${formatInteger(frames[index])} · human ${formatScore(groundTruth[index])}` +
+      ` · model ${formatScore(predicted[index])}` +
+      ` · gap ${formatScore(Math.abs(predicted[index] - groundTruth[index]))}`;
+  };
+  surface.addEventListener("pointermove", moveCursor);
+  surface.addEventListener("pointerleave", () => {
+    cursor.classList.add("is-hidden");
+    $("#compare-readout").textContent = compareReadoutSummary(series);
+  });
+  nodes.push(surface);
+
+  svg.replaceChildren(...nodes);
+  svg.setAttribute(
+    "aria-label",
+    `Episode ${Number(series.episode_index) + 1} progress, model against human ground truth.` +
+      ` Spearman ${formatScore(series.metrics?.spearman)}, MAE ${formatScore(series.metrics?.mae)}.`,
+  );
+}
+
+function compareReadoutSummary(series) {
+  const frames = series.frame_indices || [];
+  const last = frames.length - 1;
+  if (last < 0) return "This episode carries no frames.";
+  return (
+    `Point at the curve to read a frame. Final frame ${formatInteger(frames[last])}:` +
+    ` human ${formatScore(series.gt_progress[last])} · model ${formatScore(series.predicted_progress[last])}.`
+  );
+}
+
+function renderCompareStrip(series, scale) {
+  const svg = $("#compare-strip");
+  const intervals = series.intervals || [];
+  const delta = Number(series.delta_frames || 1);
+  const lanes = [
+    { label: "Model", top: STRIP.top, valueOf: (interval) => interval.predicted_label },
+    {
+      label: "Human",
+      top: STRIP.top + STRIP.lane + STRIP.gap,
+      valueOf: (interval) => interval.gt_label,
+    },
+  ];
+  const nodes = [];
+
+  lanes.forEach((lane) => {
+    nodes.push(
+      svgText(
+        {
+          class: "strip-lane-label",
+          x: STRIP.left - 10,
+          y: lane.top + STRIP.lane * 0.74,
+          "text-anchor": "end",
+        },
+        lane.label,
+      ),
+    );
+    coalesceIntervals(intervals, lane.valueOf, delta).forEach((run) => {
+      const x = scale.x(run.start);
+      const width = Math.max(1.5, scale.x(run.end) - x);
+      const block = svgNode("rect", {
+        class: `strip-block ${labelClass(run.value)}`,
+        x,
+        y: lane.top,
+        width,
+        height: STRIP.lane,
+        rx: 2,
+      });
+      nodes.push(
+        describeBlock(
+          block,
+          width,
+          `${lane.label} ${labelText(run.value)} · frames ${formatInteger(run.start)}–` +
+            `${formatInteger(run.end)} · ${formatInteger(run.windows)} window` +
+            `${run.windows === 1 ? "" : "s"}`,
+        ),
+      );
+    });
+  });
+
+  // Disagreements are tinted in place over both lanes and repeated as solid
+  // ticks on their own ruler, so they stay scannable without burying the labels.
+  const disagreements = intervals.filter(isDisagreement);
+  const lanesHeight = 2 * STRIP.lane + STRIP.gap;
+  const rulerTop = STRIP.top + lanesHeight + STRIP.gap;
+  nodes.push(
+    svgText(
+      { class: "strip-lane-label", x: STRIP.left - 10, y: rulerTop + STRIP.ruler, "text-anchor": "end" },
+      "≠",
+    ),
+  );
+  coalesceIntervals(disagreements, () => "disagreement", delta).forEach((run) => {
+    const x = scale.x(run.start);
+    const width = Math.max(1.5, scale.x(run.end) - x);
+    const caption =
+      `Disagreement over frames ${formatInteger(run.start)}–${formatInteger(run.end)}` +
+      ` · ${formatInteger(run.windows)} window${run.windows === 1 ? "" : "s"}`;
+    const tint = svgNode("rect", {
+      class: "strip-disagreement",
+      x,
+      y: STRIP.top,
+      width,
+      height: lanesHeight,
+    });
+    const tick = svgNode("rect", {
+      class: "strip-disagreement-tick",
+      x,
+      y: rulerTop,
+      width: Math.max(2, width),
+      height: STRIP.ruler,
+      rx: 1,
+    });
+    nodes.push(describeBlock(tint, width, caption), describeBlock(tick, width, caption));
+  });
+
+  svg.replaceChildren(...nodes);
+  const total = Number(series.sampling?.intervals ?? intervals.length);
+  const differing = Number(series.sampling?.interval_disagreements ?? disagreements.length);
+  svg.setAttribute(
+    "aria-label",
+    `Interval agreement strip: ${formatInteger(differing)} of ${formatInteger(total)} windows` +
+      " disagree with the human label.",
+  );
+}
+
+function renderCompareEpisodeMetrics(series) {
+  const metrics = series.metrics || {};
+  const baseline = metrics.linear_ramp_baseline || null;
+  $("#compare-episode-metrics").replaceChildren(
+    ...EPISODE_METRICS.map((definition) =>
+      metricCard(definition, metrics[definition.key], baseline?.[definition.key]),
+    ),
+  );
+  const success = series.success;
+  const completionFrame = Number(success?.gt_frame ?? Number.NaN);
+  $("#compare-success").textContent = success
+    ? `Success head: ${formatPercent(success.predicted_probability)} → ` +
+      `${success.predicted ? "completes" : "never completes"} · human ` +
+      `${success.gt === null ? "unanswered" : success.gt ? "completes" : "never completes"}` +
+      `${Number.isFinite(completionFrame) ? ` at frame ${formatInteger(completionFrame)}` : ""}`
+    : "This run reports no success head for the episode.";
+}
+
+function renderCompareSampling(series) {
+  const sampling = series.sampling || {};
+  const parts = [
+    `${formatInteger(sampling.frame_points)} of ${formatInteger(sampling.frames)} frames plotted`,
+    `${formatInteger(sampling.interval_points)} of ${formatInteger(sampling.intervals)} windows shown`,
+    `${formatInteger(sampling.interval_disagreements)} disagreement${
+      Number(sampling.interval_disagreements) === 1 ? "" : "s"
+    }`,
+    `split ${series.split}`,
+  ];
+  $("#compare-sampling").textContent = `${parts.join(" · ")}.${
+    sampling.frames_downsampled
+      ? " Curves are thinned for drawing; every peak and trough is kept."
+      : ""
+  }${sampling.agreeing_intervals_dropped ? " Every disagreeing window is kept." : ""}`;
+  $("#compare-split-pill").textContent = `${series.split} split`;
+}
+
+function renderCompareEpisode(series) {
+  const scale = compareScales(series);
+  renderCompareChart(series, scale);
+  renderCompareStrip(series, scale);
+  renderCompareEpisodeMetrics(series);
+  renderCompareSampling(series);
+  renderCompareNavigation();
+  $("#compare-readout").textContent = compareReadoutSummary(series);
+}
+
 function renderEmpty(title, copy, actionLabel = null, action = null) {
-  $("#annotation-view").classList.add("is-hidden");
-  const empty = $("#empty-workspace");
-  empty.classList.remove("is-hidden");
+  state.annotateView = "empty";
+  applyWorkspaceView();
   $("#workspace-title").textContent = title;
   const paragraph = $("#workspace-title").nextElementSibling;
   paragraph.textContent = copy;

@@ -184,6 +184,12 @@
             </div>
           </section>
 
+          <button class="button button-secondary full" id="open-compare" type="button" disabled>
+            <span class="button-icon" aria-hidden="true">◫</span>
+            Compare with model
+            <span class="run-count is-hidden" id="compare-run-count">0</span>
+          </button>
+
           <button class="button button-export full" id="open-export" type="button" disabled>
             <span class="button-icon" aria-hidden="true">↗</span>
             Export for FluxVLA
@@ -413,6 +419,150 @@
               </button>
             </nav>
           </div>
+
+          <div class="compare-view is-hidden" id="compare-view">
+            <section class="context-panel compare-header">
+              <div class="context-primary">
+                <div class="context-kicker">
+                  <span class="episode-pill" id="compare-episode-position">Episode — / —</span>
+                  <span id="compare-split-pill">—</span>
+                </div>
+                <h1 id="compare-title">Predicted progress vs. human ground truth</h1>
+                <p class="compare-run-meta" id="compare-run-meta">Loading prediction runs…</p>
+              </div>
+              <div class="compare-header-controls">
+                <label class="field compare-field" for="compare-run-select">
+                  <span>Prediction run</span>
+                  <span class="select-wrap">
+                    <select id="compare-run-select" disabled>
+                      <option value="">No runs uploaded</option>
+                    </select>
+                  </span>
+                </label>
+                <button class="button button-quiet" id="close-compare" type="button">
+                  <span aria-hidden="true">←</span>
+                  Back to annotating
+                  <kbd>Esc</kbd>
+                </button>
+              </div>
+            </section>
+
+            <section class="panel compare-empty is-hidden" id="compare-empty">
+              <p class="eyebrow">Nothing to compare yet</p>
+              <h2 id="compare-empty-title">No prediction run covers this dataset</h2>
+              <p id="compare-empty-copy">
+                An ARM evaluation writes one prediction artifact per checkpoint. Upload it with
+                POST api/predictions and it appears here beside the human labels. The artifact
+                format is defined in docs/model_predictions.md.
+              </p>
+            </section>
+
+            <div class="compare-body is-hidden" id="compare-body">
+              <section class="panel compare-panel" aria-labelledby="compare-aggregate-title">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Run aggregate</p>
+                    <h2 id="compare-aggregate-title">Every episode in this run</h2>
+                  </div>
+                  <p class="compare-note" id="compare-aggregate-note">
+                    Compared with a linear time ramp over the same frames.
+                  </p>
+                </div>
+                <div class="metric-grid" id="compare-aggregate-metrics"></div>
+                <div class="table-scroll">
+                  <table class="split-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Split</th>
+                        <th scope="col">Episodes</th>
+                        <th scope="col">Frames</th>
+                        <th scope="col">Spearman</th>
+                        <th scope="col">MAE</th>
+                        <th scope="col">Interval accuracy</th>
+                        <th scope="col">Success F1</th>
+                      </tr>
+                    </thead>
+                    <tbody id="compare-split-rows"></tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section class="panel compare-panel" aria-labelledby="compare-chart-title">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Episode <span id="compare-episode-label">—</span></p>
+                    <h2 id="compare-chart-title">Progress curve and interval agreement</h2>
+                  </div>
+                  <div class="curve-legend">
+                    <span class="curve-key human">Human</span>
+                    <span class="curve-key model">Model</span>
+                    <span class="curve-key gap">Gap</span>
+                  </div>
+                </div>
+
+                <div class="compare-plot">
+                  <div class="compare-plot-canvas">
+                    <svg
+                      id="compare-chart"
+                      viewBox="0 0 1000 300"
+                      role="img"
+                      aria-label="Predicted progress against human ground truth"
+                    ></svg>
+                    <svg
+                      id="compare-strip"
+                      viewBox="0 0 1000 62"
+                      role="img"
+                      aria-label="Interval agreement between predicted and human labels"
+                    ></svg>
+                  </div>
+                </div>
+
+                <div class="compare-plot-footer">
+                  <p class="compare-readout" id="compare-readout" aria-live="off">
+                    Point at the curve to read a frame.
+                  </p>
+                  <div class="strip-legend">
+                    <span class="strip-key regressive">−1</span>
+                    <span class="strip-key stagnant">0</span>
+                    <span class="strip-key progressive">+1</span>
+                    <span class="strip-key unscored">unscored</span>
+                    <span class="strip-key disagreement">disagreement</span>
+                  </div>
+                </div>
+                <p class="compare-note" id="compare-sampling">—</p>
+              </section>
+
+              <section class="panel compare-panel" aria-labelledby="compare-episode-title">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Episode readout</p>
+                    <h2 id="compare-episode-title">How this episode scored</h2>
+                  </div>
+                  <p class="compare-note" id="compare-success">—</p>
+                </div>
+                <div class="metric-grid" id="compare-episode-metrics"></div>
+              </section>
+
+              <nav class="sample-navigation compare-navigation" aria-label="Compared episode navigation">
+                <button class="button button-secondary" id="compare-previous" type="button" disabled>
+                  <span aria-hidden="true">←</span>
+                  Previous episode
+                  <kbd>B</kbd>
+                </button>
+                <div class="compare-episode-picker">
+                  <label class="eyebrow" for="compare-episode-select">Episode</label>
+                  <span class="select-wrap">
+                    <select id="compare-episode-select" disabled></select>
+                  </span>
+                </div>
+                <button class="button button-primary" id="compare-next" type="button" disabled>
+                  Next episode
+                  <kbd>N</kbd>
+                  <span aria-hidden="true">→</span>
+                </button>
+              </nav>
+            </div>
+          </div>
         </section>
       </main>
     </div>
@@ -633,9 +783,10 @@
           <div><kbd>C</kbd><span><strong>+1 Progressive</strong><small>Press or hold · state advances toward goal</small></span></div>
           <div><kbd>F</kbd><span><strong>Mark completion</strong><small>Complete from target frame</small></span></div>
           <div><kbd>⇧F</kbd><span><strong>Never completes</strong><small>Explicit negative success answer</small></span></div>
-          <div><kbd>B</kbd><span><strong>Previous</strong><small>Review the preceding transition</small></span></div>
+          <div><kbd>B</kbd><span><strong>Previous</strong><small>Preceding transition, or episode while comparing</small></span></div>
           <div><kbd>U</kbd><span><strong>Undo label</strong><small>Roll back the most recent saved choice</small></span></div>
-          <div><kbd>N</kbd><span><strong>Next</strong><small>Move to the next transition</small></span></div>
+          <div><kbd>N</kbd><span><strong>Next</strong><small>Next transition, or episode while comparing</small></span></div>
+          <div><kbd>Esc</kbd><span><strong>Leave comparison</strong><small>Return from the model comparison to annotating</small></span></div>
         </div>
       </div>
     </dialog>

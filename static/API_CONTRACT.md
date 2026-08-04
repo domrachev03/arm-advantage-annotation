@@ -143,6 +143,70 @@ The `Sample` shape used by the five-card strip is:
 one for each left-to-right frame transition; saved entries additionally carry
 `start_frame` and `target_frame`.
 
+## Prediction runs
+
+The comparison view is read-only; uploads happen out of band with
+`POST api/predictions` (see `docs/model_predictions.md`).
+
+- `GET api/datasets/{id}/predictions`
+  - response: an array of `PredictionRun`, newest first
+- `GET api/predictions/{run_id}`
+  - response: one `PredictionRun` plus `episodes`, an array of
+    `{"episode_index":int,"split":string,"length":int,"metrics":Metrics,
+    "success":Success|null}`
+- `GET api/predictions/{run_id}/episodes/{episode}?max_points={n}`
+  - response: one downsampled `EpisodeSeries`
+
+A `PredictionRun` carries the artifact's `run` and `grid` blocks flattened onto
+the row (`name`, `config_id`, `git_sha`, `git_dirty`, `delta_frames`,
+`window_size`, …), the parsed `dataset` and `aggregate_metrics` blocks,
+`episode_count`, and the upload provenance (`uploaded_by`, `artifact_sha256`).
+`trained_at` is the artifact's `run.created_at`; `created_at` is when the row
+was written.
+
+`aggregate_metrics` is `{"overall": Aggregate, "by_split": {split: Aggregate}}`.
+An `Aggregate` and a per-episode `Metrics` both carry `spearman`, `pearson`,
+`mae`, and `interval_accuracy`, plus an optional `linear_ramp_baseline` holding
+the same four keys for a linear time ramp over the same frames. The browser
+renders each metric against that baseline, so a missing baseline is displayed
+rather than assumed.
+
+An `EpisodeSeries` is:
+
+```json
+{
+  "run_id": 1,
+  "episode_index": 0,
+  "split": "train",
+  "length": 1039,
+  "delta_frames": 1,
+  "fps": 30.0,
+  "metrics": {},
+  "success": null,
+  "frame_indices": [0, 1, 2],
+  "predicted_progress": [0.0, 0.01, 0.02],
+  "gt_progress": [0.0, 0.01, 0.02],
+  "intervals": [
+    {
+      "target_frame": 4,
+      "start_frame": 0,
+      "delta_frames": 1,
+      "predicted_label": 1,
+      "gt_label": 1,
+      "predicted_probabilities": null
+    }
+  ],
+  "sampling": {}
+}
+```
+
+`frame_indices` gives the true frame index of every plotted point, so the
+curves stay correct after thinning. `sampling` reports what was thinned
+(`frames`, `frame_points`, `intervals`, `interval_points`,
+`interval_disagreements`, `agreeing_intervals_dropped`, and the two
+`*_downsampled` flags). Every window whose `predicted_label` differs from a
+non-null `gt_label` is kept, so `interval_points` may exceed `max_points`.
+
 ## Export
 
 - `POST api/datasets/{id}/exports`

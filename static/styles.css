@@ -1480,6 +1480,435 @@ kbd {
   font-size: 0.67rem;
 }
 
+/* Model comparison */
+
+.run-count {
+  padding: 2px 6px;
+  color: var(--accent);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.6rem;
+  font-weight: 800;
+  line-height: 1.4;
+  background: var(--amber-bg);
+  border: 1px solid #604a24;
+  border-radius: 999px;
+}
+
+.compare-view {
+  width: min(100%, 1600px);
+  margin: 0 auto;
+}
+
+.compare-header {
+  flex-wrap: wrap;
+}
+
+.compare-header > * {
+  min-width: 0;
+}
+
+.compare-run-meta {
+  overflow: hidden;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compare-header-controls {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.compare-field {
+  width: min(280px, 42vw);
+  margin-bottom: 0;
+}
+
+.compare-empty {
+  max-width: 720px;
+}
+
+.compare-empty h2 {
+  margin-bottom: 8px;
+  font-size: 1.1rem;
+}
+
+.compare-empty > p:last-child {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.compare-body {
+  display: grid;
+  gap: 16px;
+}
+
+.compare-panel {
+  padding: 18px;
+}
+
+.compare-note {
+  margin: 0;
+  color: var(--faint);
+  font-size: 0.66rem;
+  line-height: 1.45;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.metric-card {
+  min-width: 0;
+  padding: 12px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.metric-label {
+  margin-bottom: 5px;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 0.61rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.metric-value {
+  display: block;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 1.32rem;
+  font-weight: 800;
+}
+
+.metric-baseline {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 7px 0 0;
+  color: var(--faint);
+  font-size: 0.62rem;
+}
+
+.metric-delta {
+  padding: 2px 6px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.6rem;
+  font-weight: 800;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  border-radius: 999px;
+}
+
+.metric-delta.better {
+  color: var(--green);
+  background: var(--green-bg);
+  border-color: #2e6b47;
+}
+
+.metric-delta.worse {
+  color: var(--red);
+  background: var(--red-bg);
+  border-color: #74403b;
+}
+
+.metric-delta.level {
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+.table-scroll {
+  overflow-x: auto;
+  scrollbar-color: var(--line-bright) transparent;
+}
+
+.split-table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+}
+
+.split-table th,
+.split-table td {
+  padding: 9px 10px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--line);
+}
+
+.split-table thead th {
+  color: var(--faint);
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.split-table th[scope="row"] {
+  color: var(--text);
+  font-weight: 800;
+  text-align: left;
+  text-transform: capitalize;
+}
+
+.split-table tbody tr:first-child th[scope="row"] {
+  color: var(--accent);
+}
+
+.split-table tbody tr:last-child th,
+.split-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.cell-value {
+  margin-right: 6px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-weight: 700;
+}
+
+.curve-legend,
+.strip-legend {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.65rem;
+}
+
+.curve-key,
+.strip-key {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.curve-key::before {
+  width: 16px;
+  height: 3px;
+  content: "";
+  border-radius: 2px;
+}
+
+.curve-key.human::before {
+  background: var(--text);
+}
+
+.curve-key.model::before {
+  background: var(--accent-strong);
+}
+
+.curve-key.gap::before {
+  height: 10px;
+  background: rgb(238 134 124 / 30%);
+}
+
+.strip-key::before {
+  width: 11px;
+  height: 11px;
+  content: "";
+  border: 1px solid;
+  border-radius: 3px;
+}
+
+.strip-key.regressive::before {
+  background: var(--red-bg);
+  border-color: var(--red);
+}
+
+.strip-key.stagnant::before {
+  background: var(--blue-bg);
+  border-color: var(--blue);
+}
+
+.strip-key.progressive::before {
+  background: var(--green-bg);
+  border-color: var(--green);
+}
+
+.strip-key.unscored::before {
+  background: #202b24;
+  border-color: var(--line-bright);
+}
+
+.strip-key.disagreement::before {
+  background: var(--red);
+  border-color: var(--red);
+}
+
+.compare-plot {
+  overflow-x: auto;
+  padding: 4px 0 2px;
+  scrollbar-color: var(--line-bright) transparent;
+}
+
+/* Below this width the axis labels stop being readable, so the plot scrolls
+   sideways the way the five-frame strip does instead of shrinking further. */
+.compare-plot-canvas {
+  min-width: 620px;
+}
+
+#compare-chart,
+#compare-strip {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.plot-face {
+  fill: rgb(9 14 11 / 55%);
+  stroke: var(--line);
+}
+
+.plot-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.plot-grid.vertical {
+  stroke-dasharray: 3 6;
+}
+
+.plot-tick {
+  fill: var(--faint);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+}
+
+.plot-tick.completion {
+  fill: var(--green);
+}
+
+.plot-gap {
+  fill: rgb(238 134 124 / 14%);
+}
+
+.plot-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
+}
+
+.plot-line.human {
+  stroke: var(--text);
+}
+
+.plot-line.model {
+  stroke: var(--accent-strong);
+}
+
+.plot-completion {
+  stroke: var(--green);
+  stroke-dasharray: 5 5;
+  stroke-width: 1.5;
+}
+
+.plot-cursor line {
+  stroke: var(--line-bright);
+  stroke-width: 1;
+}
+
+.plot-cursor circle.human {
+  fill: var(--text);
+}
+
+.plot-cursor circle.model {
+  fill: var(--accent-strong);
+}
+
+.plot-surface {
+  fill: transparent;
+}
+
+.strip-lane-label {
+  fill: var(--faint);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.strip-block {
+  stroke-width: 1;
+}
+
+.strip-block.regressive {
+  fill: #6d3733;
+  stroke: var(--red);
+}
+
+.strip-block.stagnant {
+  fill: #23445c;
+  stroke: var(--blue);
+}
+
+.strip-block.progressive {
+  fill: #235640;
+  stroke: var(--green);
+}
+
+.strip-block.unscored {
+  fill: #202b24;
+  stroke: var(--line-bright);
+}
+
+.strip-disagreement {
+  fill: rgb(238 134 124 / 26%);
+}
+
+.strip-disagreement-tick {
+  fill: var(--red);
+}
+
+.compare-plot-footer {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  margin-bottom: 8px;
+}
+
+.compare-readout {
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.68rem;
+}
+
+.compare-navigation {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.compare-episode-picker {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  justify-self: center;
+  min-width: 0;
+  width: min(100%, 320px);
+}
+
+.compare-episode-picker .eyebrow {
+  margin: 0;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
 .modal {
   max-width: none;
   max-height: none;
@@ -1910,6 +2339,15 @@ kbd {
   .completion-actions {
     justify-content: flex-start;
   }
+
+  .compare-header-controls {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .compare-field {
+    width: min(320px, 60vw);
+  }
 }
 
 @media (max-width: 860px) {
@@ -2160,6 +2598,40 @@ kbd {
 
   .sample-navigation > .button {
     width: 100%;
+  }
+
+  .compare-navigation {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  #compare-previous {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  #compare-next {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .compare-episode-picker {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .compare-header-controls {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .compare-field {
+    width: 100%;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
   }
 
   .form-grid,
