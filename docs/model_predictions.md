@@ -448,3 +448,46 @@ chart is a few hundred pixels wide, so the series endpoint thins what it sends.
   instead of silently implying it has everything.
 
 Passing a `max_points` at or above the episode length returns every frame.
+
+## 14. Compare view
+
+The browser reaches the comparison from the dataset sidebar: **Compare with
+model**, next to the export action, carrying a badge with the number of runs
+registered for the active dataset. The button is enabled whenever the dataset
+is ready; a dataset with no run opens the view on an empty state that names the
+upload endpoint rather than hiding the entry point.
+
+The view is read-only. It reads `GET api/datasets/{id}/predictions` for the run
+selector, `GET api/predictions/{run_id}` for the aggregate block and the
+episode roster, and `GET api/predictions/{run_id}/episodes/{episode}` for the
+selected episode's series. Nothing in the view writes.
+
+It shows, from top to bottom:
+
+- the run's provenance line — name, grid, `config_id`, short git SHA and dirty
+  flag, training date, uploader
+- the run aggregate: `overall` as metric cards and `overall` plus every split
+  as a table. Each metric is printed beside its linear time-ramp value and a
+  signed margin, coloured by whether the model improves on the ramp in that
+  metric's own direction. Interval accuracy is shown as a percentage and its
+  margin in percentage points. A run without `linear_ramp_baseline` prints "No
+  ramp baseline" instead of implying a comparison.
+- the episode chart: the human curve and the predicted curve over the episode's
+  frames, the area between them shaded, the human completion frame marked, and
+  a pointer readout giving the exact values at the nearest plotted frame
+- the interval agreement strip, sharing the chart's x scale: one lane for the
+  model's labels, one for the human's, and a disagreement ruler beneath.
+  Neighbouring windows carrying the same label are drawn as a single block, and
+  each disagreement is both tinted over the two lanes and ticked on the ruler
+- the episode's own metrics, again against the ramp, and the success head's
+  answer beside the human one
+- the sampling line, which restates what the `sampling` block reported so the
+  reader knows whether the curve was thinned
+
+Selecting a run remembers it per dataset in `localStorage`. Episodes are
+stepped with the buttons, the episode selector, or `B` and `N`, which keep the
+meaning they have in the annotation view; `Esc` returns to annotating.
+
+Rendering cost is bounded by the plot, not by the episode: the curves are two
+`<polyline>` nodes whatever the frame count, and the strip's node count follows
+the number of coalesced label runs, which the `max_points` bound already caps.

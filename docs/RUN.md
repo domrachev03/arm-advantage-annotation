@@ -427,6 +427,11 @@ status codes are listed in section 13 of `docs/model_predictions.md`. A run
 name is unique per dataset, so re-uploading a corrected artifact means deleting
 the stored run first with `DELETE /api/predictions/<run_id>`.
 
+Once stored, the run is visible in the browser under **Compare with model** in
+the dataset sidebar, which charts the predicted progress curve against the
+human ground truth per episode and summarises the run against a linear time
+ramp. Section 14 of `docs/model_predictions.md` describes what it shows.
+
 ### Database health
 
 Use the supplied online backup tool rather than copying a live WAL database:
