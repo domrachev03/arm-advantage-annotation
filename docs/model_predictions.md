@@ -323,3 +323,59 @@ It exercises the cases that break naive parsers:
 
 Regenerate it only alongside a `schema_version` change, and recompute its
 metrics rather than editing them by hand.
+
+## 12. Storage
+
+Ingest maps one artifact onto four tables, all created by the additive
+migration in `app/db.py` that runs at application startup:
+
+| table | grain | contents |
+| --- | --- | --- |
+| `prediction_run` | one uploaded artifact | the `run` and `grid` blocks as columns, the `dataset` and `aggregate_metrics` blocks as JSON, plus the resolved `dataset_id`, the uploader, and the artifact's digest and size |
+| `prediction_episode` | one episode of one run | `split`, `length`, the `metrics` block, and the flattened `success` object |
+| `prediction_frame` | one frame of one episode | `predicted_progress` and `gt_progress` |
+| `prediction_interval` | one evaluated window | `predicted_label`, `gt_label`, and the optional probabilities |
+
+Column names follow the artifact's field names, with three deliberate
+exceptions:
+
+- `prediction_run.trained_at` holds `run.created_at`, because `created_at` on
+  that table is when the row was written;
+- `prediction_interval.start_frame` holds `window_frames[0]`, matching the
+  `annotation` table's own `start_frame`; the remaining window frames are
+  redundant with `target_frame` and `delta_frames` and are not stored;
+- `success` is flattened into four nullable columns, where a null
+  `success_predicted_probability` means the run had no success head.
+
+`prediction_frame` and `prediction_interval` are `WITHOUT ROWID` tables keyed by
+`(run_id, episode_index, frame_index)` and `(run_id, episode_index,
+target_frame)`, so one episode's series is a single index range scan. Both also
+carry a `(dataset_id, episode_index, …)` index for reading one episode across
+runs. Rows are written inside one transaction in batches of
+`app.predictions.INSERT_BATCH_ROWS`; the reference run's 58742 frames insert in
+well under a second.
+
+Stored metrics are the artifact's own values. The application never recomputes
+them, so an artifact whose metrics disagree with its arrays displays that
+disagreement rather than hiding it.
+
+### 12.1 Down path
+
+The migration is additive and idempotent: it only issues
+`CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS`, it alters no
+existing table, and re-running it on an already-migrated database is a no-op.
+To reverse it, drop the four tables in foreign-key order:
+
+```sql
+DROP TABLE IF EXISTS prediction_interval;
+DROP TABLE IF EXISTS prediction_frame;
+DROP TABLE IF EXISTS prediction_episode;
+DROP TABLE IF EXISTS prediction_run;
+```
+
+That statement list is `app.db.PREDICTION_SCHEMA_DOWN`, applied by
+`app.db.drop_prediction_tables()`. It discards every stored prediction run and
+leaves datasets, episodes, annotations, revision history, completion answers,
+and export jobs untouched; a later startup recreates the tables empty. Take a
+backup first, because uploaded runs are not recoverable from the database
+afterwards.

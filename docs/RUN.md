@@ -88,7 +88,7 @@ Default state layout:
 
 | path below `ARM_ANNOT_STATE` | purpose | backup priority |
 | --- | --- | --- |
-| `annotations.db` | labels, revisions, completion answers, dataset index | critical |
+| `annotations.db` | labels, revisions, completion answers, dataset index, uploaded model prediction runs | critical |
 | `datasets/` | downloaded LeRobot metadata, parquet, and selected videos | critical for rendering/export |
 | `exports/` | generated FluxVLA/LeRobot v3 outputs | optional if reproducible |
 | `cache/` | decoded JPEG frames | disposable |
@@ -356,6 +356,11 @@ git rev-parse HEAD
 
 If application rollback is necessary, stop the service, restore the previous
 Git commit and matching database backup, run `uv sync --locked`, and restart.
+
+Rolling back to a commit that predates model prediction runs needs no database
+change, because the prediction tables are additive and older code ignores them.
+Section 12.1 of `docs/model_predictions.md` documents how to drop them if you
+want the older schema exactly.
 
 ## 11. Operations and troubleshooting
 
