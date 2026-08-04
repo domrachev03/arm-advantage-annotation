@@ -371,6 +371,12 @@ def test_upload_rejects_documents_that_break_the_schema(client) -> None:
     def forget_a_split(artifact: dict[str, Any]) -> None:
         del artifact["aggregate_metrics"]["by_split"]["test"]
 
+    def overflow_the_seed(artifact: dict[str, Any]) -> None:
+        artifact["run"]["seed"] = 2**80
+
+    def underflow_the_seed(artifact: dict[str, Any]) -> None:
+        artifact["run"]["seed"] = -(2**80)
+
     assert "extra" in reject(set_extra_key)
     assert "git_sha" in reject(drop_required_key)
     assert "predicted_label" in reject(use_a_string_label)
@@ -378,6 +384,9 @@ def test_upload_rejects_documents_that_break_the_schema(client) -> None:
     assert "gt_progress" in reject(shorten_a_curve)
     assert "disagrees with the ground-truth progress" in reject(contradict_the_ground_truth)
     assert "by_split" in reject(forget_a_split)
+    # An integer too wide for SQLite must be named by the schema, not overflow the INSERT.
+    assert "run.seed" in reject(overflow_the_seed)
+    assert "run.seed" in reject(underflow_the_seed)
 
 
 def test_upload_rejects_malformed_bodies(client) -> None:
@@ -398,6 +407,22 @@ def test_upload_rejects_malformed_bodies(client) -> None:
     nan_response = upload(client, with_nan)
     assert nan_response.status_code == 422
     assert "NaN" in nan_response.json()["detail"]
+
+
+def test_upload_rejects_a_deeply_nested_body(client) -> None:
+    """Nesting exhausts the JSON decoder's stack, which is a refusal and not a 500."""
+    seed_dataset(EXAMPLE_LENGTHS)
+    depth = 12_000
+    bodies = {
+        "arrays": b"[" * depth + b"]" * depth,
+        "objects": b'{"a":' * depth + b"1" + b"}" * depth,
+    }
+    for shape, body in bodies.items():
+        assert len(body) < 1024 * 1024, shape
+        for payload in (body, gzip.compress(body)):
+            response = upload(client, payload)
+            assert response.status_code == 422, shape
+            assert "nested too deeply" in response.json()["detail"], shape
 
 
 def test_missing_runs_and_episodes_are_reported_as_missing(client) -> None:

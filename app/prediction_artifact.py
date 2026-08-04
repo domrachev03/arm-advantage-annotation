@@ -27,6 +27,13 @@ MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 PROBABILITY_SUM_TOLERANCE = 1e-4
 FPS_TOLERANCE = 1e-6
 
+# SQLite stores an integer in at most eight bytes, so a wider value cannot be
+# written at all. Integers that reach storage unconstrained are bounded here so
+# the upload is refused with a 422 naming the field rather than overflowing the
+# INSERT and escaping as a 500.
+SQLITE_INT_MIN = -(2**63)
+SQLITE_INT_MAX = 2**63 - 1
+
 
 class ArtifactError(Exception):
     """An artifact that cannot be accepted, with the status code to answer."""
@@ -68,6 +75,7 @@ Correlation = Annotated[float, Field(ge=-1.0, le=1.0, allow_inf_nan=False)]
 Rate = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
 NonNegative = Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+StoredInt = Annotated[int, Field(ge=SQLITE_INT_MIN, le=SQLITE_INT_MAX)]
 Timestamp = Annotated[str, BeforeValidator(_timestamp)]
 Window = Annotated[list[int], Field(min_length=5, max_length=5)]
 Probabilities = Annotated[list[Rate], Field(min_length=3, max_length=3)]
@@ -88,7 +96,7 @@ class RunBlock(ArtifactModel):
     git_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
     git_dirty: bool
     training_command: str = Field(min_length=1)
-    seed: int | None
+    seed: StoredInt | None
     created_at: Timestamp
     split_file: str = Field(min_length=1)
     split_file_sha256: Digest | None
@@ -312,6 +320,10 @@ def decode(raw: bytes) -> dict[str, Any]:
         raise ArtifactError("artifact is not UTF-8 text") from None
     try:
         document = json.loads(text, parse_constant=_reject_constant)
+    except RecursionError:
+        # Deeply nested JSON exhausts the decoder's stack, which surfaces as
+        # RecursionError rather than as a subclass of ValueError.
+        raise ArtifactError("artifact JSON is nested too deeply to parse") from None
     except ValueError as error:
         raise ArtifactError(f"artifact is not valid JSON: {error}") from None
     if not isinstance(document, dict):

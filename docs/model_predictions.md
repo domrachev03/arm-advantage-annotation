@@ -12,7 +12,10 @@ can render them against the human ground truth.
 This document is normative. The training track writes files against it and the
 upload endpoint validates against it; neither side may extend it silently. A
 change that is not backwards compatible requires a `schema_version` bump agreed
-on both sides.
+on both sides. Both sides settled the container on 2026-08-04: the training
+track's export step emits exactly one JSON document per run, and the parquet
+sidecar its earlier task description asked for was dropped for the reasons in
+section 1.1.
 
 ## 1. Transport
 
@@ -68,6 +71,7 @@ the ceiling, that is a `schema_version` bump, not an undocumented second path.
 | Gap | `delta_frames` as an exact positive integer count of frame-index steps; seconds are derived as `delta_frames / fps` and are never carried in the artifact |
 | Timestamp | RFC 3339 with an explicit UTC offset, for example `2026-08-04T09:58:41+00:00` |
 | Digest | lowercase hexadecimal SHA-256 |
+| Integer range | every integer this schema carries fits the signed 64-bit range `-2^63` to `2^63 - 1`, which is what the server can store |
 | Path | string as seen on the training host; informational provenance only |
 
 ### 2.2 Null and absence rules
@@ -121,7 +125,7 @@ Run metadata identifies the checkpoint well enough to reproduce it.
 | `git_sha` | string | yes | 40-character commit SHA of the training repository |
 | `git_dirty` | boolean | yes | whether the working tree had uncommitted changes at training time |
 | `training_command` | string | yes | the exact command line that produced the checkpoint |
-| `seed` | integer or null | yes | training seed |
+| `seed` | integer or null | yes | training seed; like every integer this schema stores, it must fit in a signed 64-bit range |
 | `created_at` | timestamp | yes | when the checkpoint was produced; distinct from `generated_at` |
 | `split_file` | string | yes | path to the train/val/test split definition in the training repository |
 | `split_file_sha256` | string or null | yes | digest of that split file |
@@ -415,7 +419,8 @@ curl -sS --fail-with-body -b cookies.txt \
 ```
 
 A successful upload answers `201` with the stored run. Refusals carry the
-reason in `detail` and never a stack trace:
+reason in `detail` and never a stack trace. No upload, however malformed, is
+answered with a 5xx: every rejection is one of the statuses below.
 
 | Status | Meaning |
 | --- | --- |
@@ -423,7 +428,7 @@ reason in `detail` and never a stack trace:
 | `404` | no dataset is registered for the artifact's `(repo_id, revision, subpath)`, or the run or episode does not exist |
 | `409` | the artifact binds to a registered dataset but disagrees with it: `dataset_id` hint, `fps`, `total_episodes`, `total_frames`, `delta_frames`, an unregistered episode, an episode length, a dataset that is still importing, or a run name already in use |
 | `413` | the body or its decompressed contents exceed 64 MiB |
-| `422` | the document breaks this schema; `detail` names the offending path, for example `episodes.1.intervals.0.window_frames` |
+| `422` | the body is unreadable — empty, not UTF-8, not JSON, not a JSON object, or nested too deeply to parse — or the document breaks this schema, in which case `detail` names the offending path, for example `episodes.1.intervals.0.window_frames` |
 
 ### 13.1 Downsampling the series
 
