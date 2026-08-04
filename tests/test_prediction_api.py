@@ -409,6 +409,23 @@ def test_upload_rejects_malformed_bodies(client) -> None:
     assert "NaN" in nan_response.json()["detail"]
 
 
+def test_upload_refuses_a_lone_surrogate_but_keeps_astral_characters(client) -> None:
+    """A `\\uD800` escape is text SQLite cannot store; a surrogate pair is one ordinary character."""
+    seed_dataset(EXAMPLE_LENGTHS)
+
+    lone = load_artifact()
+    lone["run"]["notes"] = "checkpoint \ud800"
+    refused = upload(client, json.dumps(lone))
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == "run.notes: Value error, must be encodable as UTF-8"
+
+    paired = load_artifact()
+    paired["run"]["notes"] = "best run so far \U0001f600"
+    accepted = upload(client, json.dumps(paired))
+    assert accepted.status_code == 201
+    assert accepted.json()["notes"] == "best run so far \U0001f600"
+
+
 def test_upload_rejects_a_deeply_nested_body(client) -> None:
     """Nesting exhausts the JSON decoder's stack, which is a refusal and not a 500."""
     seed_dataset(EXAMPLE_LENGTHS)

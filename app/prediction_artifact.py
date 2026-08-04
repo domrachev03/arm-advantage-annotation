@@ -59,6 +59,18 @@ def _reject_bool(value: Any) -> Any:
     return value
 
 
+def _utf8(value: Any) -> Any:
+    # A `\uD800` JSON escape decodes to a lone surrogate, which an unconstrained
+    # string field accepts but SQLite cannot encode, so it would surface as an
+    # INSERT failure rather than as a validation error.
+    if isinstance(value, str) and not value.isascii():
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValueError("must be encodable as UTF-8") from None
+    return value
+
+
 def _timestamp(value: str) -> str:
     try:
         parsed = datetime.fromisoformat(value)
@@ -69,6 +81,7 @@ def _timestamp(value: str) -> str:
     return value
 
 
+Text = Annotated[str, BeforeValidator(_utf8)]
 Label = Annotated[Literal[-1, 0, 1], BeforeValidator(_reject_bool)]
 Progress = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
 Correlation = Annotated[float, Field(ge=-1.0, le=1.0, allow_inf_nan=False)]
@@ -88,26 +101,26 @@ class ArtifactModel(BaseModel):
 
 
 class RunBlock(ArtifactModel):
-    name: str = Field(min_length=1, max_length=120)
-    checkpoint_path: str = Field(min_length=1)
+    name: Text = Field(min_length=1, max_length=120)
+    checkpoint_path: Text = Field(min_length=1)
     checkpoint_sha256: Digest | None
-    config_id: str = Field(min_length=1)
-    config_path: str | None
+    config_id: Text = Field(min_length=1)
+    config_path: Text | None
     git_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
     git_dirty: bool
-    training_command: str = Field(min_length=1)
+    training_command: Text = Field(min_length=1)
     seed: StoredInt | None
     created_at: Timestamp
-    split_file: str = Field(min_length=1)
+    split_file: Text = Field(min_length=1)
     split_file_sha256: Digest | None
-    notes: str | None = None
+    notes: Text | None = None
 
 
 class DatasetBlock(ArtifactModel):
-    repo_id: str = Field(min_length=1)
-    revision: str = Field(min_length=1)
-    subpath: str
-    source_url: str | None
+    repo_id: Text = Field(min_length=1)
+    revision: Text = Field(min_length=1)
+    subpath: Text
+    source_url: Text | None
     dataset_id: int | None
     fps: float = Field(gt=0, allow_inf_nan=False)
     total_episodes: int = Field(ge=0)
@@ -119,7 +132,7 @@ class GridBlock(ArtifactModel):
     window_size: Literal[5]
     interval_eps: float = Field(ge=0, allow_inf_nan=False)
     no_completion_ceiling: Rate
-    gt_progress_source: str = Field(min_length=1)
+    gt_progress_source: Text = Field(min_length=1)
 
 
 class IntervalBlock(ArtifactModel):
@@ -220,7 +233,7 @@ class ArtifactDocument(ArtifactModel):
     schema_version: Literal[1]
     artifact_kind: Literal["arm_prediction_run"]
     generated_at: Timestamp
-    tool: str = Field(min_length=1)
+    tool: Text = Field(min_length=1)
     run: RunBlock
     dataset: DatasetBlock
     grid: GridBlock

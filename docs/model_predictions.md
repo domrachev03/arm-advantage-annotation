@@ -72,6 +72,7 @@ the ceiling, that is a `schema_version` bump, not an undocumented second path.
 | Timestamp | RFC 3339 with an explicit UTC offset, for example `2026-08-04T09:58:41+00:00` |
 | Digest | lowercase hexadecimal SHA-256 |
 | Integer range | every integer this schema carries fits the signed 64-bit range `-2^63` to `2^63 - 1`, which is what the server can store |
+| Text | any JSON string, but every escape must resolve to a character that encodes as UTF-8; a lone surrogate such as `\uD800` is refused, while a surrogate pair naming an astral character is ordinary text |
 | Path | string as seen on the training host; informational provenance only |
 
 ### 2.2 Null and absence rules
