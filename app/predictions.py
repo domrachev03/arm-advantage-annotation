@@ -3,8 +3,9 @@
 One uploaded artifact (docs/model_predictions.md) becomes one `prediction_run`
 row, one `prediction_episode` row per covered episode, one `prediction_frame`
 row per frame, and one `prediction_interval` row per evaluated causal window.
-The artifact is validated by the upload endpoint; this module writes what it is
-given and reads it back.
+The artifact is validated by the upload endpoint (`app/prediction_artifact.py`);
+this module writes what it is given, reads it back, and thins one episode's
+series down to what a chart needs.
 """
 
 from __future__ import annotations
@@ -18,6 +19,14 @@ from .db import connect, dumps, loads, now, transaction
 # Per-frame rows are inserted in batches of this size so a 60 000-frame run
 # stays a bounded number of parameter buffers instead of one enormous list.
 INSERT_BATCH_ROWS = 10_000
+
+# A compare chart is a few hundred pixels wide, so an episode's series is thinned
+# to this many frames unless the caller asks for more.
+DEFAULT_SERIES_POINTS = 500
+
+# Frames kept per bucket by `downsample_series`: the bucket's first frame plus
+# the extremes of both curves.
+FRAMES_PER_BUCKET = 5
 
 RUN_COLUMNS = (
     "dataset_id",
@@ -67,6 +76,12 @@ INSERT_EPISODE_SQL = (
 INSERT_FRAME_SQL = (
     "INSERT INTO prediction_frame(run_id,dataset_id,episode_index,frame_index,"
     "predicted_progress,gt_progress) VALUES(?,?,?,?,?,?)"
+)
+
+SELECT_RUN_SQL = (
+    "SELECT prediction_run.*,"
+    " (SELECT COUNT(*) FROM prediction_episode WHERE run_id=prediction_run.id) AS episode_count"
+    " FROM prediction_run"
 )
 
 INSERT_INTERVAL_SQL = (
@@ -233,8 +248,18 @@ def run_row(row: Any) -> dict[str, Any]:
 
 
 def episode_row(row: Any) -> dict[str, Any]:
+    """Reassemble one stored episode into the artifact's own block structure."""
     item = dict(row)
-    item["linear_ramp_baseline"] = loads(item.pop("linear_ramp_baseline_json", None), None)
+    item.pop("id", None)
+    item["metrics"] = {
+        "frames": item.pop("frames"),
+        "intervals": item.pop("intervals"),
+        "spearman": item.pop("spearman"),
+        "pearson": item.pop("pearson"),
+        "mae": item.pop("mae"),
+        "interval_accuracy": item.pop("interval_accuracy"),
+        "linear_ramp_baseline": loads(item.pop("linear_ramp_baseline_json", None), None),
+    }
     probability = item.pop("success_predicted_probability")
     predicted = item.pop("success_predicted")
     ground_truth = item.pop("success_gt")
@@ -254,14 +279,14 @@ def episode_row(row: Any) -> dict[str, Any]:
 
 def get_prediction_run(run_id: int) -> dict[str, Any] | None:
     with connect(read_only=True) as conn:
-        row = conn.execute("SELECT * FROM prediction_run WHERE id=?", (run_id,)).fetchone()
+        row = conn.execute(f"{SELECT_RUN_SQL} WHERE id=?", (run_id,)).fetchone()
     return run_row(row) if row else None
 
 
 def list_prediction_runs(dataset_id: int) -> list[dict[str, Any]]:
     with connect(read_only=True) as conn:
         rows = conn.execute(
-            "SELECT * FROM prediction_run WHERE dataset_id=? ORDER BY id DESC", (dataset_id,)
+            f"{SELECT_RUN_SQL} WHERE dataset_id=? ORDER BY id DESC", (dataset_id,)
         ).fetchall()
     return [run_row(row) for row in rows]
 
@@ -309,6 +334,93 @@ def episode_series(run_id: int, episode_index: int) -> dict[str, Any] | None:
         for interval in intervals
     ]
     return item
+
+
+def _disagrees(interval: dict[str, Any]) -> bool:
+    return interval["gt_label"] is not None and interval["predicted_label"] != interval["gt_label"]
+
+
+def _frame_indices(
+    predicted: list[float], ground_truth: list[float], max_points: int
+) -> list[int]:
+    """Pick the frames to keep: bucket boundaries plus both curves' extremes.
+
+    Thinning by a plain stride flattens a peak that falls between two kept
+    frames. Keeping each bucket's minimum and maximum of both curves instead
+    preserves the envelope, which is what a reader compares.
+    """
+    total = len(predicted)
+    if total <= max_points:
+        return list(range(total))
+    buckets = max(1, (max_points - 2) // FRAMES_PER_BUCKET)
+    keep = {0, total - 1}
+    for bucket in range(buckets):
+        start = bucket * total // buckets
+        stop = (bucket + 1) * total // buckets
+        if start >= stop:
+            continue
+        span = range(start, stop)
+        keep.add(start)
+        for values in (predicted, ground_truth):
+            keep.add(min(span, key=values.__getitem__))
+            keep.add(max(span, key=values.__getitem__))
+    return sorted(keep)
+
+
+def _evenly_spaced(positions: list[int], budget: int) -> list[int]:
+    if budget <= 0:
+        return []
+    if budget >= len(positions):
+        return positions
+    step = len(positions) / budget
+    return [positions[int(slot * step)] for slot in range(budget)]
+
+
+def _thin_intervals(
+    intervals: list[dict[str, Any]], max_points: int
+) -> tuple[list[dict[str, Any]], int]:
+    """Thin the interval strip, never dropping a predicted/human disagreement."""
+    if len(intervals) <= max_points:
+        return list(intervals), 0
+    disagreeing = [position for position, item in enumerate(intervals) if _disagrees(item)]
+    agreeing = [position for position, item in enumerate(intervals) if not _disagrees(item)]
+    kept_agreeing = _evenly_spaced(agreeing, max_points - len(disagreeing))
+    keep = sorted(set(disagreeing) | set(kept_agreeing))
+    return [intervals[position] for position in keep], len(agreeing) - len(kept_agreeing)
+
+
+def downsample_series(
+    series: dict[str, Any], max_points: int = DEFAULT_SERIES_POINTS
+) -> dict[str, Any]:
+    """Thin one episode's curves and interval strip down to chart size.
+
+    The curves keep their first and last frame and every bucket extreme, so the
+    visual shape survives. The strip keeps every window where the predicted and
+    human labels differ, so a disagreement is never dropped silently; the
+    `sampling` block reports exactly what was thinned.
+    """
+    predicted = series["predicted_progress"]
+    ground_truth = series["gt_progress"]
+    intervals = series["intervals"]
+    indices = _frame_indices(predicted, ground_truth, max_points)
+    kept, dropped = _thin_intervals(intervals, max_points)
+    return {
+        "frame_indices": indices,
+        "predicted_progress": [predicted[index] for index in indices],
+        "gt_progress": [ground_truth[index] for index in indices],
+        "intervals": kept,
+        "sampling": {
+            "max_points": max_points,
+            "frames": len(predicted),
+            "frame_points": len(indices),
+            "frames_downsampled": len(indices) < len(predicted),
+            "intervals": len(intervals),
+            "interval_points": len(kept),
+            "intervals_downsampled": len(kept) < len(intervals),
+            "interval_disagreements": sum(1 for item in intervals if _disagrees(item)),
+            "agreeing_intervals_dropped": dropped,
+        },
+    }
 
 
 def delete_prediction_run(run_id: int) -> bool:

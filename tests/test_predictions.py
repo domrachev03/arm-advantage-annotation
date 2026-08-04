@@ -250,10 +250,7 @@ def test_example_artifact_round_trips_through_storage(database: None) -> None:
         assert series["predicted_progress"] == expected["predicted_progress"]
         assert series["gt_progress"] == expected["gt_progress"]
         assert series["length"] == expected["length"]
-        assert series["mae"] == expected["metrics"]["mae"]
-        assert series["spearman"] == expected["metrics"]["spearman"]
-        assert series["interval_accuracy"] == expected["metrics"]["interval_accuracy"]
-        assert series["linear_ramp_baseline"] == expected["metrics"]["linear_ramp_baseline"]
+        assert series["metrics"] == expected["metrics"]
         assert series["success"] == expected["success"]
         assert [item["target_frame"] for item in series["intervals"]] == [
             item["target_frame"] for item in expected["intervals"]
@@ -288,9 +285,9 @@ def test_nullable_artifact_fields_survive_storage(database: None) -> None:
     series = episode_series(run_id, 0)
     assert series is not None
     assert series["success"] is None
-    assert series["spearman"] is None
-    assert series["interval_accuracy"] is None
-    assert series["linear_ramp_baseline"] is None
+    assert series["metrics"]["spearman"] is None
+    assert series["metrics"]["interval_accuracy"] is None
+    assert series["metrics"]["linear_ramp_baseline"] is None
     assert series["intervals"][0]["gt_label"] is None
     assert series["intervals"][0]["predicted_probabilities"] is None
     assert series["intervals"][1]["predicted_probabilities"] == [0.05, 0.15, 0.8]

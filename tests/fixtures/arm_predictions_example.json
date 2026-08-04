@@ -6,7 +6,7 @@
   "run": {
     "name": "arm-kuka-assemble-front-r3",
     "checkpoint_path": "/data/runs/arm-kuka-assemble-front-r3/checkpoints/step-008000.pt",
-    "checkpoint_sha256": "6f1c9f6a5b4e3d2c1b0a99887766554433221100ffeeddccbbaa99887766554433",
+    "checkpoint_sha256": "6f1c9f6a5b4e3d2c1b0a99887766554433221100ffeeddccbbaa998877665544",
     "config_id": "arm/kuka_assemble_front_r3",
     "config_path": "configs/arm/kuka_assemble_front_r3.yaml",
     "git_sha": "9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60718293",

@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
-from . import service
+from . import prediction_artifact, predictions, service
 from .annotation import frame_window, sample_targets
 from .auth import clean_name, login, logout, optional_session, password_matches, require_session
 from .config import DATASETS_ROOT, EXPORTS_ROOT, MOUNT_PATH, STATIC_ROOT
@@ -614,6 +616,98 @@ def export_status(export_id: int, _user: User) -> dict[str, Any]:
     item = dict(row)
     item["manifest"] = json.loads(item.pop("manifest_json")) if item.get("manifest_json") else None
     return item
+
+
+async def read_artifact_body(request: Request) -> bytes:
+    """Buffer an uploaded artifact, refusing a body past the documented ceiling."""
+    ceiling = prediction_artifact.MAX_ARTIFACT_BYTES
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > ceiling:
+            raise HTTPException(413, f"artifact exceeds the {ceiling // (1024 * 1024)} MiB ceiling")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+@app.post("/api/predictions", status_code=201)
+async def upload_prediction_run(request: Request, user: User) -> dict[str, Any]:
+    raw = await read_artifact_body(request)
+    try:
+        artifact = prediction_artifact.parse(raw)
+        dataset = prediction_artifact.bind_dataset(artifact)
+    except prediction_artifact.ArtifactError as error:
+        raise HTTPException(error.status, str(error)) from None
+    try:
+        run_id = predictions.insert_prediction_run(
+            artifact,
+            dataset_id=int(dataset["id"]),
+            uploaded_by=user,
+            artifact_sha256=hashlib.sha256(raw).hexdigest(),
+            artifact_bytes=len(raw),
+        )
+    except sqlite3.IntegrityError:
+        # Another upload of the same run name won the race between binding and insert.
+        raise HTTPException(
+            409,
+            f"dataset {dataset['id']} already has a prediction run named"
+            f" {artifact['run']['name']!r}",
+        ) from None
+    stored = predictions.get_prediction_run(run_id)
+    if stored is None:
+        raise HTTPException(500, "the uploaded run could not be read back")
+    return stored
+
+
+@app.get("/api/datasets/{dataset_id}/predictions")
+def dataset_predictions(dataset_id: int, _user: User) -> list[dict[str, Any]]:
+    if not service.get_dataset(dataset_id):
+        raise HTTPException(404, "dataset not found")
+    return predictions.list_prediction_runs(dataset_id)
+
+
+@app.get("/api/predictions/{run_id}")
+def prediction_run_detail(run_id: int, _user: User) -> dict[str, Any]:
+    run = predictions.get_prediction_run(run_id)
+    if not run:
+        raise HTTPException(404, "prediction run not found")
+    return {**run, "episodes": predictions.list_prediction_episodes(run_id)}
+
+
+@app.get("/api/predictions/{run_id}/episodes/{episode_index}")
+def prediction_episode_series(
+    run_id: int,
+    episode_index: int,
+    _user: User,
+    max_points: int = Query(default=predictions.DEFAULT_SERIES_POINTS, ge=50, le=20_000),
+) -> dict[str, Any]:
+    run = predictions.get_prediction_run(run_id)
+    if not run:
+        raise HTTPException(404, "prediction run not found")
+    series = predictions.episode_series(run_id, episode_index)
+    if series is None:
+        raise HTTPException(404, "this prediction run does not cover that episode")
+    return {
+        "run_id": run_id,
+        "dataset_id": run["dataset_id"],
+        "name": run["name"],
+        "episode_index": episode_index,
+        "split": series["split"],
+        "length": series["length"],
+        "delta_frames": run["delta_frames"],
+        "fps": run["dataset"].get("fps"),
+        "success": series["success"],
+        "metrics": series["metrics"],
+        **predictions.downsample_series(series, max_points),
+    }
+
+
+@app.delete("/api/predictions/{run_id}")
+def remove_prediction_run(run_id: int, _user: User) -> dict[str, Any]:
+    if not predictions.delete_prediction_run(run_id):
+        raise HTTPException(404, "prediction run not found")
+    return {"ok": True, "id": run_id}
 
 
 if STATIC_ROOT.is_dir():
