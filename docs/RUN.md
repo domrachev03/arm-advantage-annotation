@@ -88,7 +88,7 @@ Default state layout:
 
 | path below `ARM_ANNOT_STATE` | purpose | backup priority |
 | --- | --- | --- |
-| `annotations.db` | labels, revisions, completion answers, dataset index | critical |
+| `annotations.db` | labels, revisions, completion answers, dataset index, uploaded model prediction runs | critical |
 | `datasets/` | downloaded LeRobot metadata, parquet, and selected videos | critical for rendering/export |
 | `exports/` | generated FluxVLA/LeRobot v3 outputs | optional if reproducible |
 | `cache/` | decoded JPEG frames | disposable |
@@ -357,6 +357,11 @@ git rev-parse HEAD
 If application rollback is necessary, stop the service, restore the previous
 Git commit and matching database backup, run `uv sync --locked`, and restart.
 
+Rolling back to a commit that predates model prediction runs needs no database
+change, because the prediction tables are additive and older code ignores them.
+Section 12.1 of `docs/model_predictions.md` documents how to drop them if you
+want the older schema exactly.
+
 ## 11. Operations and troubleshooting
 
 ### Service does not start
@@ -402,6 +407,30 @@ The browser prefetches sample metadata and future frames; the server decodes up
 to four distinct frames concurrently. First access is decode-bound, while
 subsequent access should use the JPEG cache. Faster local storage and avoiding
 remote filesystems materially improve performance.
+
+### Uploading a model prediction run
+
+Prediction artifacts are uploaded over the same authenticated API the browser
+uses, so log in once and reuse the cookie:
+
+```bash
+BASE=https://<host>/arm/advantage_annotation
+curl -sS --fail-with-body -c cookies.txt -H 'Content-Type: application/json' \
+  -d '{"name":"<your name>","password":"<shared password>"}' "$BASE/api/login"
+curl -sS --fail-with-body -b cookies.txt -H 'Content-Type: application/json' \
+  --data-binary @<run>.arm_predictions.json "$BASE/api/predictions"
+```
+
+The dataset is resolved from the artifact itself, which must bind to a dataset
+that is already imported and ready. A refusal explains what disagreed; the
+status codes are listed in section 13 of `docs/model_predictions.md`. A run
+name is unique per dataset, so re-uploading a corrected artifact means deleting
+the stored run first with `DELETE /api/predictions/<run_id>`.
+
+Once stored, the run is visible in the browser under **Compare with model** in
+the dataset sidebar, which charts the predicted progress curve against the
+human ground truth per episode and summarises the run against a linear time
+ramp. Section 14 of `docs/model_predictions.md` describes what it shows.
 
 ### Database health
 

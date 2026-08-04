@@ -1,0 +1,343 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "arm_prediction_run",
+  "generated_at": "2026-08-04T11:24:03+00:00",
+  "tool": "fluxvla.tools.arm_eval.evaluate_arm:export_prediction_artifact",
+  "run": {
+    "name": "arm-kuka-assemble-front-r3",
+    "checkpoint_path": "/data/runs/arm-kuka-assemble-front-r3/checkpoints/step-008000.pt",
+    "checkpoint_sha256": "6f1c9f6a5b4e3d2c1b0a99887766554433221100ffeeddccbbaa998877665544",
+    "config_id": "arm/kuka_assemble_front_r3",
+    "config_path": "configs/arm/kuka_assemble_front_r3.yaml",
+    "git_sha": "9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60718293",
+    "git_dirty": false,
+    "training_command": "python -m fluxvla.train --config configs/arm/kuka_assemble_front_r3.yaml --steps 8000 --seed 17",
+    "seed": 17,
+    "created_at": "2026-08-04T09:58:41+00:00",
+    "split_file": "configs/arm/splits/kuka_assemble_60.json",
+    "split_file_sha256": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+    "notes": "Front camera, frame_gap 2, interval_eps 1e-3."
+  },
+  "dataset": {
+    "repo_id": "orel-lab/kuka_assemble",
+    "revision": "main",
+    "subpath": "",
+    "source_url": "https://huggingface.co/datasets/orel-lab/kuka_assemble",
+    "dataset_id": null,
+    "fps": 30.0,
+    "total_episodes": 3,
+    "total_frames": 33
+  },
+  "grid": {
+    "delta_frames": 2,
+    "window_size": 5,
+    "interval_eps": 0.001,
+    "no_completion_ceiling": 0.95,
+    "gt_progress_source": "meta/arm_export_manifest.json"
+  },
+  "episodes": [
+    {
+      "episode_index": 0,
+      "split": "train",
+      "length": 13,
+      "predicted_progress": [
+        0.02,
+        0.05,
+        0.09,
+        0.15,
+        0.2,
+        0.26,
+        0.31,
+        0.31,
+        0.33,
+        0.47,
+        0.63,
+        0.8,
+        0.97
+      ],
+      "gt_progress": [
+        0.0,
+        0.02,
+        0.05,
+        0.12,
+        0.18,
+        0.24,
+        0.3,
+        0.3,
+        0.3,
+        0.44,
+        0.62,
+        0.81,
+        1.0
+      ],
+      "intervals": [
+        {
+          "target_frame": 8,
+          "window_frames": [
+            0,
+            2,
+            4,
+            6,
+            8
+          ],
+          "predicted_label": 0,
+          "gt_label": 0
+        },
+        {
+          "target_frame": 10,
+          "window_frames": [
+            2,
+            4,
+            6,
+            8,
+            10
+          ],
+          "predicted_label": 1,
+          "gt_label": 1
+        },
+        {
+          "target_frame": 12,
+          "window_frames": [
+            4,
+            6,
+            8,
+            10,
+            12
+          ],
+          "predicted_label": 1,
+          "gt_label": 1
+        }
+      ],
+      "success": {
+        "predicted_probability": 0.97,
+        "predicted": true,
+        "gt": true,
+        "gt_frame": 12
+      },
+      "metrics": {
+        "frames": 13,
+        "intervals": 3,
+        "spearman": 0.995859,
+        "pearson": 0.999435,
+        "mae": 0.022308,
+        "interval_accuracy": 1.0,
+        "linear_ramp_baseline": {
+          "spearman": 0.99449,
+          "pearson": 0.938315,
+          "mae": 0.163077,
+          "interval_accuracy": 0.666667
+        }
+      }
+    },
+    {
+      "episode_index": 1,
+      "split": "val",
+      "length": 11,
+      "predicted_progress": [
+        0.01,
+        0.1,
+        0.2,
+        0.31,
+        0.44,
+        0.5,
+        0.57,
+        0.49,
+        0.42,
+        0.68,
+        0.94
+      ],
+      "gt_progress": [
+        0.0,
+        0.08,
+        0.18,
+        0.3,
+        0.46,
+        0.52,
+        0.6,
+        0.44,
+        0.36,
+        0.7,
+        1.0
+      ],
+      "intervals": [
+        {
+          "target_frame": 8,
+          "window_frames": [
+            0,
+            2,
+            4,
+            6,
+            8
+          ],
+          "predicted_label": 0,
+          "gt_label": -1
+        },
+        {
+          "target_frame": 10,
+          "window_frames": [
+            2,
+            4,
+            6,
+            8,
+            10
+          ],
+          "predicted_label": 1,
+          "gt_label": 1
+        }
+      ],
+      "success": {
+        "predicted_probability": 0.94,
+        "predicted": true,
+        "gt": true,
+        "gt_frame": 10
+      },
+      "metrics": {
+        "frames": 11,
+        "intervals": 2,
+        "spearman": 0.990909,
+        "pearson": 0.994915,
+        "mae": 0.029091,
+        "interval_accuracy": 0.5,
+        "linear_ramp_baseline": {
+          "spearman": 0.854545,
+          "pearson": 0.885025,
+          "mae": 0.092727,
+          "interval_accuracy": 0.5
+        }
+      }
+    },
+    {
+      "episode_index": 2,
+      "split": "test",
+      "length": 9,
+      "predicted_progress": [
+        0.03,
+        0.12,
+        0.2,
+        0.3,
+        0.42,
+        0.5,
+        0.64,
+        0.79,
+        0.9
+      ],
+      "gt_progress": [
+        0.0,
+        0.1,
+        0.21,
+        0.33,
+        0.4,
+        0.52,
+        0.68,
+        0.81,
+        0.95
+      ],
+      "intervals": [
+        {
+          "target_frame": 8,
+          "window_frames": [
+            0,
+            2,
+            4,
+            6,
+            8
+          ],
+          "predicted_label": 1,
+          "gt_label": 1
+        }
+      ],
+      "success": {
+        "predicted_probability": 0.31,
+        "predicted": false,
+        "gt": false,
+        "gt_frame": null
+      },
+      "metrics": {
+        "frames": 9,
+        "intervals": 1,
+        "spearman": 1.0,
+        "pearson": 0.99838,
+        "mae": 0.026667,
+        "interval_accuracy": 1.0,
+        "linear_ramp_baseline": {
+          "spearman": 1.0,
+          "pearson": 0.99647,
+          "mae": 0.055556,
+          "interval_accuracy": 1.0
+        }
+      }
+    }
+  ],
+  "aggregate_metrics": {
+    "overall": {
+      "episodes": 3,
+      "frames": 33,
+      "intervals": 6,
+      "scored_episodes": 3,
+      "spearman": 0.995589,
+      "pearson": 0.997577,
+      "mae": 0.025758,
+      "interval_accuracy": 0.833333,
+      "success_f1": 1.0,
+      "linear_ramp_baseline": {
+        "spearman": 0.949678,
+        "pearson": 0.939937,
+        "mae": 0.110303,
+        "interval_accuracy": 0.666667
+      }
+    },
+    "by_split": {
+      "train": {
+        "episodes": 1,
+        "frames": 13,
+        "intervals": 3,
+        "scored_episodes": 1,
+        "spearman": 0.995859,
+        "pearson": 0.999435,
+        "mae": 0.022308,
+        "interval_accuracy": 1.0,
+        "success_f1": 1.0,
+        "linear_ramp_baseline": {
+          "spearman": 0.99449,
+          "pearson": 0.938315,
+          "mae": 0.163077,
+          "interval_accuracy": 0.666667
+        }
+      },
+      "val": {
+        "episodes": 1,
+        "frames": 11,
+        "intervals": 2,
+        "scored_episodes": 1,
+        "spearman": 0.990909,
+        "pearson": 0.994915,
+        "mae": 0.029091,
+        "interval_accuracy": 0.5,
+        "success_f1": 1.0,
+        "linear_ramp_baseline": {
+          "spearman": 0.854545,
+          "pearson": 0.885025,
+          "mae": 0.092727,
+          "interval_accuracy": 0.5
+        }
+      },
+      "test": {
+        "episodes": 1,
+        "frames": 9,
+        "intervals": 1,
+        "scored_episodes": 1,
+        "spearman": 1.0,
+        "pearson": 0.99838,
+        "mae": 0.026667,
+        "interval_accuracy": 1.0,
+        "success_f1": null,
+        "linear_ramp_baseline": {
+          "spearman": 1.0,
+          "pearson": 0.99647,
+          "mae": 0.055556,
+          "interval_accuracy": 1.0
+        }
+      }
+    }
+  }
+}
