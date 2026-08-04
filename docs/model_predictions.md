@@ -20,8 +20,12 @@ One artifact is one UTF-8 JSON document holding a single object.
 
 - File name: `<run.name>.arm_predictions.json`, optionally gzipped as
   `<run.name>.arm_predictions.json.gz`.
-- Upload: `multipart/form-data` to the prediction upload endpoint. The server
-  detects gzip from the magic bytes, not from the file name.
+- Upload: the file is the raw request body of `POST /api/predictions`
+  (section 13), so any HTTP client can send it with `--data-binary`. The server
+  detects gzip from the magic bytes, not from the file name or the content
+  type. `prediction_run.artifact_sha256` and `prediction_run.artifact_bytes`
+  record the bytes exactly as uploaded, so a gzipped upload is digested
+  compressed.
 - Encoding: UTF-8 without a byte order mark, LF line endings, one trailing
   newline.
 - Serialization: any JSON writer is acceptable. Producers should use compact
@@ -157,6 +161,9 @@ Binding rules enforced on upload:
    dataset's values.
 3. Every `episodes[].episode_index` must exist for that dataset, and every
    `episodes[].length` must equal the registered `episode.length`.
+4. `run.name` must be free for that dataset. A second upload under a name the
+   dataset already carries is refused; delete the stored run or rename this
+   one. Uploads never overwrite a stored run.
 
 ## 6. `grid`
 
@@ -204,9 +211,9 @@ Invariants checked on upload:
 
 - `window_frames == [t - 4Δ, t - 3Δ, t - 2Δ, t - Δ, t]` for `t = target_frame`
   and `Δ = grid.delta_frames`, and `window_frames[0] >= 0`.
-- `target_frame < length`, so the whole window lies inside the episode. This is
-  the same grid the annotation queue uses: the first target is `4Δ` and targets
-  advance by `Δ`.
+- `target_frame < length`, so the whole window lies inside the episode, and
+  `target_frame` is a multiple of `Δ`. This is the same grid the annotation
+  queue uses: the first target is `4Δ` and targets advance by `Δ`.
 - When `gt_label` is not `null` it must equal the deadband of the ground-truth
   progress difference, that is `deadband(gt_progress[t] - gt_progress[t - Δ])`
   with `grid.interval_eps`. The export guarantees this round trip, so a
@@ -245,7 +252,10 @@ the full episode, except `interval_accuracy`, which compares labels.
 
 Producers round every score to 6 decimal places. The application stores the
 supplied values and does not recompute them, so an artifact whose metrics
-disagree with its own arrays will display that disagreement.
+disagree with its own arrays will display that disagreement. `frames` and
+`intervals` are the exception: they are counts of the artifact's own contents
+rather than scores, so upload checks them and refuses a document whose counts
+do not match its arrays.
 
 ## 9. `aggregate_metrics`
 
@@ -379,3 +389,62 @@ leaves datasets, episodes, annotations, revision history, completion answers,
 and export jobs untouched; a later startup recreates the tables empty. Take a
 backup first, because uploaded runs are not recoverable from the database
 afterwards.
+
+## 13. Endpoints
+
+Every route below requires the same session cookie as the annotation routes;
+there is no unauthenticated write path and no unauthenticated read path.
+`app/prediction_artifact.py` is the executable form of sections 2 to 10, and
+`app/predictions.py` reads the stored run back.
+
+| Method and path | Purpose |
+| --- | --- |
+| `POST /api/predictions` | upload one artifact as the raw request body |
+| `GET /api/datasets/{dataset_id}/predictions` | runs of one dataset, newest first, each with its `aggregate_metrics` |
+| `GET /api/predictions/{run_id}` | one run plus its per-episode `split`, `length`, `metrics`, and `success` |
+| `GET /api/predictions/{run_id}/episodes/{episode_index}` | one episode's curves, interval strip, and metrics |
+| `DELETE /api/predictions/{run_id}` | discard one run and everything stored under it |
+
+Uploading the example fixture:
+
+```bash
+curl -sS --fail-with-body -b cookies.txt \
+  -H 'Content-Type: application/json' \
+  --data-binary @arm-kuka-assemble-front-r3.arm_predictions.json \
+  https://<host>/arm/advantage_annotation/api/predictions
+```
+
+A successful upload answers `201` with the stored run. Refusals carry the
+reason in `detail` and never a stack trace:
+
+| Status | Meaning |
+| --- | --- |
+| `401` | no session; the upload path is a write and is authenticated like any other |
+| `404` | no dataset is registered for the artifact's `(repo_id, revision, subpath)`, or the run or episode does not exist |
+| `409` | the artifact binds to a registered dataset but disagrees with it: `dataset_id` hint, `fps`, `total_episodes`, `total_frames`, `delta_frames`, an unregistered episode, an episode length, a dataset that is still importing, or a run name already in use |
+| `413` | the body or its decompressed contents exceed 64 MiB |
+| `422` | the document breaks this schema; `detail` names the offending path, for example `episodes.1.intervals.0.window_frames` |
+
+### 13.1 Downsampling the series
+
+An episode of the reference dataset is about a thousand frames, and a compare
+chart is a few hundred pixels wide, so the series endpoint thins what it sends.
+`max_points` (default `app.predictions.DEFAULT_SERIES_POINTS`, range 50 to
+20000) bounds both the curves and the interval strip.
+
+- Frames are bucketed, and each bucket contributes its first frame plus the
+  minimum and maximum of *both* curves. A plain stride would flatten a spike
+  that falls between two kept frames; keeping bucket extremes preserves the
+  envelope a reader compares. The first and last frame are always present, and
+  `frame_indices` carries the original frame index of every kept point, so the
+  x-axis stays exact.
+- The interval strip keeps **every** window whose `predicted_label` differs
+  from a non-null `gt_label`. Only agreeing windows are thinned, evenly. A
+  disagreement is the whole point of the comparison and is never dropped to
+  save bytes.
+- The `sampling` block reports `frames`, `frame_points`, `intervals`,
+  `interval_points`, `interval_disagreements`, `agreeing_intervals_dropped`,
+  and the two `…_downsampled` flags, so a client can state what it is showing
+  instead of silently implying it has everything.
+
+Passing a `max_points` at or above the episode length returns every frame.

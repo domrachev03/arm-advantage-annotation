@@ -408,6 +408,25 @@ to four distinct frames concurrently. First access is decode-bound, while
 subsequent access should use the JPEG cache. Faster local storage and avoiding
 remote filesystems materially improve performance.
 
+### Uploading a model prediction run
+
+Prediction artifacts are uploaded over the same authenticated API the browser
+uses, so log in once and reuse the cookie:
+
+```bash
+BASE=https://<host>/arm/advantage_annotation
+curl -sS --fail-with-body -c cookies.txt -H 'Content-Type: application/json' \
+  -d '{"name":"<your name>","password":"<shared password>"}' "$BASE/api/login"
+curl -sS --fail-with-body -b cookies.txt -H 'Content-Type: application/json' \
+  --data-binary @<run>.arm_predictions.json "$BASE/api/predictions"
+```
+
+The dataset is resolved from the artifact itself, which must bind to a dataset
+that is already imported and ready. A refusal explains what disagreed; the
+status codes are listed in section 13 of `docs/model_predictions.md`. A run
+name is unique per dataset, so re-uploading a corrected artifact means deleting
+the stored run first with `DELETE /api/predictions/<run_id>`.
+
 ### Database health
 
 Use the supplied online backup tool rather than copying a live WAL database:
